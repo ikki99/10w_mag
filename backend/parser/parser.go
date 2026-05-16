@@ -3,10 +3,10 @@ package parser
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/anacrolix/torrent"
-	"github.com/anacrolix/torrent/metainfo"
 )
 
 type ParseResult struct {
@@ -59,7 +59,7 @@ func Parse(magnetURI string) (*ParseResult, error) {
 		for _, f := range info.Files {
 			path := ""
 			if len(f.Path) > 0 {
-				path = metainfo.ToSlashedPath(f.Path)
+				path = strings.Join(f.Path, "/")
 			}
 			files = append(files, File{
 				Path: path,
