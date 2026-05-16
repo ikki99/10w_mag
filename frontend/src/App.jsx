@@ -33,6 +33,7 @@ export default function App() {
   const [statusIdx, setStatus]  = useState(0);
   const [stats, setStats]       = useState(null);
   const [copied, setCopied]     = useState(false);
+  const [searchResults, setSearchResults] = useState(null); // null=hidden, []=empty, [...]= results
 
   // Admin
   const [isAdmin, setIsAdmin]         = useState(false);
@@ -106,12 +107,36 @@ export default function App() {
     const clean = input.trim();
     if (!clean) return;
     const hash = extractHash(clean);
+    const isMagnet = clean.startsWith('magnet:');
+    const isKeyword = !hash && !isMagnet;
+
     setParsing(true);
     setResult(null);
     setError(null);
     setStats(null);
     setCopied(false);
+    setSearchResults(null);
 
+    // ── Keyword search: query local cache ──────────────────────────────────
+    if (isKeyword) {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/search?q=${encodeURIComponent(clean)}`);
+        const data = await res.json();
+        setParsing(false);
+        if (res.ok) {
+          setSearchResults(data);
+          if (data.length === 0) setError(t('searchEmpty'));
+        } else {
+          setError(t('errorParse'));
+        }
+      } catch (_) {
+        setParsing(false);
+        setError(t('errorParse'));
+      }
+      return;
+    }
+
+    // ── Magnet / hash: parse as before ─────────────────────────────────────
     if (hash) {
       try {
         const res = await fetch(`${BACKEND_URL}/api/parse/cache?hash=${hash}`);
@@ -506,7 +531,7 @@ export default function App() {
             />
             {magnet && !parsing && (
               <button type="button" className="clear-btn"
-                onClick={() => { setMagnet(''); setResult(null); setError(null); setStats(null); window.history.replaceState(null, '', '/'); }}>
+                onClick={() => { setMagnet(''); setResult(null); setError(null); setStats(null); setSearchResults(null); window.history.replaceState(null, '', '/'); }}>
                 <X size={15} />
               </button>
             )}
@@ -589,6 +614,39 @@ export default function App() {
                   );
                 })}
               </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── Search Results ── */}
+        <AnimatePresence>
+          {searchResults && searchResults.length > 0 && (
+            <motion.div className="search-results-wrap"
+              initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: .35, ease: [.16, 1, .3, 1] }}>
+              <p className="search-results-hint">{t('searchFound').replace('{n}', searchResults.length)}</p>
+              {searchResults.map((item, i) => (
+                <div key={i} className="search-result-card"
+                  onClick={async () => {
+                    setMagnet(`magnet:?xt=urn:btih:${item.infoHash}`);
+                    setSearchResults(null);
+                    setParsing(true);
+                    setResult(null); setError(null); setStats(null);
+                    try {
+                      const res = await fetch(`${BACKEND_URL}/api/parse/cache?hash=${item.infoHash}`);
+                      if (res.ok) { handleSuccess(await res.json()); }
+                      else { setParsing(false); setError(t('errorParse')); }
+                    } catch (_) { setParsing(false); setError(t('errorParse')); }
+                  }}>
+                  <div className="sr-name">{item.name || item.infoHash}</div>
+                  <div className="sr-meta">
+                    <span className="badge">{item.fileCount} {t('fileCount')}</span>
+                    <span className="badge">{formatSize(item.totalSize)}</span>
+                    <span className="badge">{item.queryCount} {t('statsQuery')}</span>
+                  </div>
+                  <code className="sr-hash">{item.infoHash}</code>
+                </div>
+              ))}
             </motion.div>
           )}
         </AnimatePresence>

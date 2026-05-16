@@ -80,6 +80,7 @@ func main() {
 		api.GET("/stats/:hash", handleStats)
 		api.GET("/trackers", handleTrackers)
 		api.GET("/torrent/:hash", handleDownloadTorrent)
+		api.GET("/search", handleSearch)
 
 		// Admin Login
 		api.POST("/admin/login", handleAdminLogin)
@@ -283,6 +284,20 @@ func handleTrackers(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, trackers)
+}
+
+func handleSearch(c *gin.Context) {
+	q := strings.TrimSpace(c.Query("q"))
+	if len(q) < 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query too short"})
+		return
+	}
+	results, err := db.SearchCache(q)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, results)
 }
 
 func authMiddleware() gin.HandlerFunc {

@@ -231,8 +231,10 @@ func formatResult(t *torrent.Torrent) *ParseResult {
 		Size:     totalSize,
 	}
 
-	// Encode full metainfo so the client can download a real .torrent file
+	// Ensure we get a valid .torrent file by marshaling the Metainfo correctly
 	mi := t.Metainfo()
+	// The key is to ensure the Info section is present. anacrolix/torrent usually
+	// populates this if t.GotInfo() has fired.
 	if b, err := bencode.Marshal(mi); err == nil {
 		res.TorrentBase64 = base64.StdEncoding.EncodeToString(b)
 	}

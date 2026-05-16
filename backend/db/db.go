@@ -219,6 +219,50 @@ func GetAllStats() ([]map[string]interface{}, error) {
 	return stats, nil
 }
 
+// SearchCache searches cached torrents by name keyword.
+// Uses SQLite json_extract to query the name field stored in the metadata JSON.
+func SearchCache(query string) ([]map[string]interface{}, error) {
+	like := "%" + query + "%"
+	rows, err := database.Query(`
+		SELECT info_hash, query_count, last_query_time,
+		       json_extract(metadata, '$.name')      AS name,
+		       json_extract(metadata, '$.totalSize') AS total_size,
+		       (SELECT COUNT(*) FROM json_each(json_extract(metadata, '$.files'))) AS file_count
+		FROM hash_stats
+		WHERE metadata IS NOT NULL
+		  AND metadata != ''
+		  AND json_extract(metadata, '$.name') LIKE ?
+		ORDER BY query_count DESC
+		LIMIT 50
+	`, like)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var hash, lastTime, name sql.NullString
+		var count, fileCount int
+		var totalSize sql.NullInt64
+		if err := rows.Scan(&hash, &count, &lastTime, &name, &totalSize, &fileCount); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"infoHash":   hash.String,
+			"name":       name.String,
+			"totalSize":  totalSize.Int64,
+			"fileCount":  fileCount,
+			"queryCount": count,
+			"lastTime":   lastTime.String,
+		})
+	}
+	if results == nil {
+		results = []map[string]interface{}{}
+	}
+	return results, nil
+}
+
 func ToggleTracker(id int, enabled int) error {
 	_, err := database.Exec("UPDATE trackers SET enabled = ? WHERE id = ?", enabled, id)
 	return err
