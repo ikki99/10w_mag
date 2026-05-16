@@ -7,7 +7,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import translations from './i18n';
 
-const BACKEND_URL = 'http://localhost:6467';
+const BACKEND_URL = '';
 
 // ─── File type icon + color map ───────────────────────────────────────────────
 const FILE_TYPES = [
