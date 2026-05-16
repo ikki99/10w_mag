@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
-import WebTorrent from 'webtorrent';
+import React, { useState, useEffect } from 'react';
 import { Search, FileText, Download, ShieldCheck, Activity, ChevronRight, AlertCircle, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -19,46 +18,12 @@ function App() {
   const [adminSettings, setAdminSettings] = useState({});
   const [adminPass, setAdminPass] = useState('');
   const [honeypot, setHoneypot] = useState(''); // Honeypot field
-  // Tracks the currently active parse client so it can be destroyed on unmount
-  const activeClientRef = useRef(null);
-
-  // Browser-only: reliable wss:// trackers hardcoded as baseline
-  const WSS_TRACKERS = [
-    'wss://tracker.openwebtorrent.com',
-    'wss://tracker.webtorrent.dev',
-  ];
 
   useEffect(() => {
-    // Sync additional wss:// trackers from backend
-    const syncTrackers = async () => {
-      try {
-        const res = await fetch(`${BACKEND_URL}/api/trackers`);
-        if (res.ok) {
-          const data = await res.json();
-          // Browser can only use wss:// trackers
-          const wss = Array.isArray(data)
-            ? data.filter(url => url.startsWith('wss://') || url.startsWith('ws://'))
-            : [];
-          window._syncedTrackers = wss;
-          console.log('Backend provided', wss.length, 'wss trackers');
-        }
-      } catch (e) {
-        window._syncedTrackers = [];
-      }
-    };
-    syncTrackers();
-
     if (adminToken) {
       setIsAdmin(true);
       fetchAdminData();
     }
-    return () => {
-      // Clean up any in-progress parse on unmount
-      if (activeClientRef.current) {
-        try { activeClientRef.current.destroy(); } catch (e) {}
-        activeClientRef.current = null;
-      }
-    };
   }, []);
 
   const handleAdminLogin = async (e) => {
@@ -166,118 +131,16 @@ function App() {
       } catch (e) { /* 网络错误忽略，继续下一级 */ }
     }
 
-    // ── 第二级：前端 P2P + 后端并行，前端礼让 3 秒先跑 ──
-    // 若浏览器 3 秒内没消息，后端同步启动；谁先成功谁赢，避免死等 20s
-    let settled = false;
-    const settle = (data) => {
-      if (settled) return;
-      settled = true;
+    // ── 第二级：后端解析 ──
+    try {
+      setStatus('服务器解析中...');
+      const data = await parseWithBackend(cleanMagnet);
       handleSuccess(data);
-    };
-
-    setStatus('P2P 网络搜索中（浏览器直连）...');
-
-    const frontendPromise = parseWithFrontend(cleanMagnet, 20000)
-      .then(data => { settle(data); })
-      .catch(err => console.log('Frontend P2P failed:', err));
-
-    // 后端礼让 3 秒，给前端机会先赢
-    const backendPromise = new Promise(resolve => setTimeout(resolve, 3000))
-      .then(() => {
-        if (settled) return;
-        setStatus('服务器并行搜索中...');
-        return parseWithBackend(cleanMagnet);
-      })
-      .then(data => { if (data) settle(data); })
-      .catch(err => console.log('Backend parse failed:', err));
-
-    await Promise.all([frontendPromise, backendPromise]);
-
-    if (!settled) {
+    } catch (err) {
       setParsing(false);
       setStatus('');
       setError('解析失败：该磁力链接暂无活跃节点，请稍后重试。');
     }
-  };
-
-  const parseWithFrontend = (magnetURI, timeoutMs) => {
-    return new Promise((resolve, reject) => {
-      // Destroy any previous client to avoid stale state / duplicate errors
-      if (activeClientRef.current) {
-        try { activeClientRef.current.destroy(); } catch (e) {}
-        activeClientRef.current = null;
-      }
-
-      const client = new WebTorrent();
-      activeClientRef.current = client;
-      let settled = false;
-
-      const finish = (result) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        activeClientRef.current = null;
-        setTimeout(() => { try { client.destroy(); } catch (e) {} }, 300);
-        resolve(result);
-      };
-
-      const fail = (reason) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        activeClientRef.current = null;
-        setTimeout(() => { try { client.destroy(); } catch (e) {} }, 300);
-        reject(reason);
-      };
-
-      // Normalize: accept bare 40-char hex hash
-      let mag = magnetURI.trim();
-      if (/^[0-9a-fA-F]{40}$/i.test(mag)) {
-        mag = `magnet:?xt=urn:btih:${mag.toLowerCase()}`;
-      }
-
-      // Combine hardcoded + backend-synced wss trackers; deduplicate
-      const trackers = [...new Set([
-        ...WSS_TRACKERS,
-        ...(window._syncedTrackers || []),
-      ])];
-
-      // Inject all trackers into the magnet URI
-      trackers.forEach(tr => {
-        const enc = encodeURIComponent(tr);
-        if (!mag.includes(enc)) mag += `&tr=${enc}`;
-      });
-
-      const timer = setTimeout(() => fail('timeout'), timeoutMs);
-
-      client.on('error', err => fail(err.message || String(err)));
-
-      setStatus('P2P 网络搜索中（同步后端解析）...');
-
-      // Pass trackers both via magnet URI and the announce option for maximum coverage
-      client.add(mag, { announce: trackers }, (torrent) => {
-        torrent.on('wire', () => {
-          if (!settled) setStatus(`P2P 已发现 ${torrent.numPeers} 个节点，等待元数据...`);
-        });
-
-        const onMetadata = () => {
-          finish({
-            infoHash: torrent.infoHash,
-            name: torrent.name,
-            files: torrent.files.map(f => ({ path: f.path, size: f.length })),
-            totalSize: torrent.length,
-            torrentFile: torrent.torrentFile,
-          });
-        };
-
-        // Metadata might already be available (cached / fast tracker response)
-        if (torrent.files && torrent.files.length > 0) {
-          onMetadata();
-        } else {
-          torrent.once('metadata', onMetadata);
-        }
-      });
-    });
   };
 
   const parseWithBackend = async (magnetURI) => {
