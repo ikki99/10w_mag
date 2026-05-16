@@ -90,6 +90,10 @@ body {
 }
 
 .search-actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
+.privacy-hint {
+  margin-top: 12px; font-size: 12px; color: var(--text-muted);
+  text-align: center; letter-spacing: .01em; opacity: .75;
+}
 .btn-search {
   background: #f8f9fa; border: 1px solid #f8f9fa; color: #3c4043;
   padding: 0 26px; height: 38px; border-radius: 4px;
@@ -144,9 +148,16 @@ body {
 }
 .icon-btn:hover { background: #f1f3f4; color: var(--text); }
 
-.result-badges { display: flex; gap: 7px; flex-wrap: wrap; }
+.result-badges { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
 .badge { font-size: 12px; color: var(--text-muted); background: #f3f4f6; padding: 3px 10px; border-radius: 99px; }
 .badge.accent { background: var(--primary-lit); color: var(--primary); }
+.btn-dl {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 500; color: var(--primary);
+  background: var(--primary-lit); border: none; cursor: pointer;
+  padding: 4px 12px; border-radius: 99px; transition: background .15s, opacity .15s;
+}
+.btn-dl:hover { background: #d2e3fc; }
 
 /* ─── File List ───────────────────────────────────────────────────────────── */
 .file-list { max-height: 520px; overflow-y: auto; }

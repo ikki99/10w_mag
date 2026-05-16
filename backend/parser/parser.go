@@ -2,6 +2,7 @@ package parser
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"strings"
@@ -9,13 +10,15 @@ import (
 	"time"
 
 	"github.com/anacrolix/torrent"
+	"github.com/anacrolix/torrent/bencode"
 )
 
 type ParseResult struct {
-	InfoHash string `json:"infoHash"`
-	Name     string `json:"name"`
-	Files    []File `json:"files"`
-	Size     int64  `json:"totalSize"`
+	InfoHash      string `json:"infoHash"`
+	Name          string `json:"name"`
+	Files         []File `json:"files"`
+	Size          int64  `json:"totalSize"`
+	TorrentBase64 string `json:"torrentBase64,omitempty"`
 }
 
 type File struct {
@@ -185,10 +188,18 @@ func formatResult(t *torrent.Torrent) *ParseResult {
 		totalSize = info.Length
 	}
 
-	return &ParseResult{
+	res := &ParseResult{
 		InfoHash: t.InfoHash().String(),
 		Name:     info.Name,
 		Files:    files,
 		Size:     totalSize,
 	}
+
+	// Encode full metainfo so the client can download a real .torrent file
+	mi := t.Metainfo()
+	if b, err := bencode.Marshal(mi); err == nil {
+		res.TorrentBase64 = base64.StdEncoding.EncodeToString(b)
+	}
+
+	return res
 }

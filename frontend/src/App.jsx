@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Search, Film, Music, Image as ImgIcon, Archive,
-  FileText, Code2, File, Copy, Check, Link2,
+  FileText, Code2, File, Copy, Check, Link2, Download,
   ShieldCheck, Activity, AlertCircle, X, RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -106,8 +106,12 @@ export default function App() {
     }
 
     // Tier 2: backend DHT parse
+    // If bare hash, construct full magnet URI so backend can recognise it
+    const magnetURI = hash && !clean.startsWith('magnet:')
+      ? `magnet:?xt=urn:btih:${hash}`
+      : clean;
     try {
-      const res = await fetch(`${BACKEND_URL}/api/parse?magnet=${encodeURIComponent(clean)}`);
+      const res = await fetch(`${BACKEND_URL}/api/parse?magnet=${encodeURIComponent(magnetURI)}`);
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error || 'Backend failed');
@@ -149,6 +153,22 @@ export default function App() {
     await navigator.clipboard.writeText(`magnet:?xt=urn:btih:${result.infoHash}`).catch(() => {});
     setCopiedMag(true);
     setTimeout(() => setCopiedMag(false), 2000);
+  };
+
+  const downloadTorrent = () => {
+    if (!result?.torrentBase64) return;
+    const binary = atob(result.torrentBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: 'application/x-bittorrent' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${result.name || result.infoHash}.torrent`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const formatSize = (bytes) => {
@@ -395,6 +415,7 @@ export default function App() {
               {parsing ? '解析中…' : '解析磁力'}
             </button>
           </div>
+          <p className="privacy-hint">本站不存储任何文件 · 不收集个人信息 · 仅解析磁力元数据</p>
         </form>
 
         {/* Cycling status */}
@@ -443,6 +464,12 @@ export default function App() {
                   <span className="badge">{result.files?.length ?? 1} 个文件</span>
                   <span className="badge">{formatSize(result.totalSize)}</span>
                   {stats && <span className="badge accent">已查询 {stats.query_count} 次</span>}
+                  {result.torrentBase64 && (
+                    <button className="btn-dl" onClick={downloadTorrent} title="下载 .torrent 种子文件">
+                      <Download size={13} />
+                      下载种子
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -469,8 +496,6 @@ export default function App() {
 
       <footer className="site-footer">
         <span>隐私保护</span>
-        <span>·</span>
-        <a href="/10w_gl888">管理</a>
       </footer>
     </div>
   );

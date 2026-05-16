@@ -19,7 +19,7 @@ import (
 )
 
 const ADMIN_PASS = "10w_gl888"
-const VERSION = "0.2.0"
+const VERSION = "0.3.1"
 
 //go:embed all:dist
 var frontendFS embed.FS
