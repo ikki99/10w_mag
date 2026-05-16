@@ -360,7 +360,66 @@ export default function App() {
                     value={adminSettings.tracker_sync_source || ''}
                     onChange={e => setAdminSettings({ ...adminSettings, tracker_sync_source: e.target.value })} />
                 </div>
+                <div className="field-group">
+                  <label>DHT 并发解析数 <span className="field-badge">防过载</span></label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <input type="number" min="1" max="200" className="field-input" style={{ width: 90 }}
+                      value={adminSettings.parse_concurrency || '15'}
+                      onChange={e => setAdminSettings({ ...adminSettings, parse_concurrency: e.target.value })} />
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>个（当前运行中的 DHT 解析最大数）</span>
+                  </div>
+                </div>
                 <button className="btn-primary" onClick={saveSettings}>保存设置</button>
+              </div>
+            </div>
+
+            {/* VPS Guide */}
+            <div className="panel-card guide-card">
+              <h3>📖 小白指引：不同配置 VPS 推荐设置</h3>
+              <p className="guide-intro">
+                『DHT 并发解析数』是关键性能参数。每个 DHT 解析任务会占用 ~25 个 TCP/UDP 连接和部分内存，
+                设置过大会导致文件描述符耗尽或 OOM。
+              </p>
+              <table className="guide-table">
+                <thead>
+                  <tr>
+                    <th>VPS 配置</th>
+                    <th>推荐并发数</th>
+                    <th>预计年容量</th>
+                    <th>备注</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="guide-row-warn">
+                    <td>1核 512M</td><td><strong>3–5</strong></td><td>日均 1K–2K 新hash</td><td>保守，避免 OOM</td>
+                  </tr>
+                  <tr>
+                    <td>1核 1G</td><td><strong>10</strong></td><td>日均 5K–8K 新hash</td><td>默认推荐</td>
+                  </tr>
+                  <tr>
+                    <td>2核 2G</td><td><strong>20</strong></td><td>日均 1.5万 新hash</td><td>性价比高</td>
+                  </tr>
+                  <tr>
+                    <td>4核 4G</td><td><strong>40</strong></td><td>日均 3万+ 新hash</td><td>高性能</td>
+                  </tr>
+                  <tr>
+                    <td>8核 8G+</td><td><strong>80–100</strong></td><td>不受并发限制</td><td>需同步调大 ulimit</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div className="guide-tips">
+                <div className="guide-tip">
+                  <span className="tip-icon">&#9888;</span>
+                  <span><strong>ulimit -n</strong>：服务器默认文件描述符上限为 1024。批发与并发数大于 10 时，建议在启动脚本中添加：<code>ulimit -n 65535</code></span>
+                </div>
+                <div className="guide-tip">
+                  <span className="tip-icon">&#128274;</span>
+                  <span><strong>缓存命中率：</strong>已解析过的 hash 直接返回数据库缓存，<em>不占用</em>并发数。高命中率时 1核也可支撑数千 QPS。</span>
+                </div>
+                <div className="guide-tip">
+                  <span className="tip-icon">&#128257;</span>
+                  <span><strong>修改即生效：</strong>保存设置后无需重启服务。</span>
+                </div>
               </div>
             </div>
           </div>

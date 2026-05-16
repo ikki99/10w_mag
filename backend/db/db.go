@@ -56,6 +56,7 @@ func Init() error {
 		"admin_path":          "10w_gl888",
 		"backend_enabled":     "1",
 		"tracker_sync_source": "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all_ws.txt",
+		"parse_concurrency":   "15",
 	}
 
 	for k, v := range defaults {

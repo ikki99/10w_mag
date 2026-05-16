@@ -35,6 +35,14 @@ func main() {
 		log.Printf("Warning: Parser init failed: %v", err)
 	}
 
+	// Apply saved concurrency setting
+	if cv := db.GetSetting("parse_concurrency"); cv != "" {
+		var n int
+		if _, err := fmt.Sscanf(cv, "%d", &n); err == nil && n > 0 {
+			parser.SetConcurrency(n)
+		}
+	}
+
 	// Initialize Tracker Sync
 	go tracker.StartSync()
 
@@ -341,6 +349,7 @@ func handleGetSettings(c *gin.Context) {
 		"admin_path":          db.GetSetting("admin_path"),
 		"backend_enabled":     db.GetSetting("backend_enabled"),
 		"tracker_sync_source": db.GetSetting("tracker_sync_source"),
+		"parse_concurrency":   db.GetSetting("parse_concurrency"),
 	}
 	c.JSON(http.StatusOK, settings)
 }
@@ -353,6 +362,13 @@ func handleSaveSettings(c *gin.Context) {
 	}
 	for k, v := range input {
 		db.SetSetting(k, v)
+		// Live-apply concurrency change without restart
+		if k == "parse_concurrency" {
+			var n int
+			if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+				parser.SetConcurrency(n)
+			}
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Settings saved"})
 }

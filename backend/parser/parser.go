@@ -28,6 +28,35 @@ type File struct {
 
 var globalClient *torrent.Client
 
+// ── Concurrency semaphore ────────────────────────────────────────────────────
+// Dynamic: channel is replaced atomically; in-flight goroutines hold old ref
+var (
+	parseSemCh    = make(chan struct{}, 15)
+	parseSemMu    sync.RWMutex
+	parseSemLimit = 15
+)
+
+// SetConcurrency adjusts the max simultaneous DHT parse goroutines.
+func SetConcurrency(n int) {
+	if n < 1 {
+		n = 1
+	}
+	if n > 200 {
+		n = 200
+	}
+	parseSemMu.Lock()
+	parseSemLimit = n
+	parseSemCh = make(chan struct{}, n)
+	parseSemMu.Unlock()
+}
+
+// GetConcurrency returns the current limit.
+func GetConcurrency() int {
+	parseSemMu.RLock()
+	defer parseSemMu.RUnlock()
+	return parseSemLimit
+}
+
 // In-memory result cache to avoid re-fetching same info hash
 var (
 	resultCache   = make(map[string]*ParseResult)
@@ -46,8 +75,8 @@ func Init() error {
 	// Tune for faster metadata discovery
 	cfg.DisableTCP = false
 	cfg.DisableUTP = false
-	cfg.EstablishedConnsPerTorrent = 50
-	cfg.HalfOpenConnsPerTorrent = 25
+	cfg.EstablishedConnsPerTorrent = 25
+	cfg.HalfOpenConnsPerTorrent = 10
 
 	var err error
 	globalClient, err = torrent.NewClient(cfg)
@@ -129,13 +158,20 @@ func Parse(magnetURI string, extraTrackers []string) (*ParseResult, error) {
 
 	infoHash := t.InfoHash().String()
 
-	// Check in-memory cache first
+	// Check in-memory cache first (before acquiring semaphore)
 	resultCacheMu.RLock()
 	if cached, ok := resultCache[infoHash]; ok {
 		resultCacheMu.RUnlock()
 		return cached, nil
 	}
 	resultCacheMu.RUnlock()
+
+	// Acquire concurrency semaphore — blocks if too many DHT parses in-flight
+	parseSemMu.RLock()
+	sem := parseSemCh
+	parseSemMu.RUnlock()
+	sem <- struct{}{}
+	defer func() { <-sem }()
 
 	// If metadata is already available (torrent was previously added)
 	if t.Info() != nil {
