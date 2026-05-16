@@ -60,10 +60,10 @@ func main() {
 		api.GET("/parse/cache", handleCacheCheck)
 		api.GET("/stats/:hash", handleStats)
 		api.GET("/trackers", handleTrackers)
-		
+
 		// Admin Login
 		api.POST("/admin/login", handleAdminLogin)
-		
+
 		// Protected Admin Routes
 		admin := api.Group("/admin")
 		admin.Use(authMiddleware())
@@ -74,7 +74,7 @@ func main() {
 			admin.POST("/trackers/toggle", handleToggleTracker)
 			admin.DELETE("/trackers/:id", handleDeleteTracker)
 			admin.POST("/trackers/clean", handleCleanTrackers)
-			
+
 			// Settings APIs
 			admin.GET("/settings", handleGetSettings)
 			admin.POST("/settings", handleSaveSettings)
@@ -83,10 +83,10 @@ func main() {
 
 	// Serve Frontend (Embedded)
 	fe, _ := fs.Sub(frontendFS, "dist")
-	
+
 	r.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
-		
+
 		// 1. Try to serve file from FS (e.g. /logo.png, /assets/...)
 		f, err := fe.Open(path[1:]) // strip leading slash
 		if err == nil {
@@ -99,7 +99,7 @@ func main() {
 		if path == "/admin" {
 			log.Printf("Honeypot (Path) triggered by IP: %s", c.ClientIP())
 		}
-		
+
 		// 3. Fallback to index.html for SPA routing
 		file, err := fs.ReadFile(fe, "index.html")
 		if err != nil {

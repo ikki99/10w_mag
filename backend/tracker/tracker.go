@@ -165,4 +165,3 @@ func extractHost(u, prefix string) string {
 	}
 	return s
 }
-

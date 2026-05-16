@@ -1,71 +1,193 @@
-import React, { useState, useEffect } from 'react';
-import { Search, FileText, Download, ShieldCheck, Activity, ChevronRight, AlertCircle, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Search, Film, Music, Image as ImgIcon, Archive,
+  FileText, Code2, File, Copy, Check, Link2,
+  ShieldCheck, Activity, AlertCircle, X, RefreshCw
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const BACKEND_URL = 'http://localhost:6467';
 
-function App() {
-  const [magnet, setMagnet] = useState('');
-  const [parsing, setParsing] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
-  const [status, setStatus] = useState('');
-  const [stats, setStats] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [adminToken, setAdminToken] = useState(localStorage.getItem('adminToken') || '');
-  const [adminStats, setAdminStats] = useState([]);
+// ─── File type icon + color map ───────────────────────────────────────────────
+const FILE_TYPES = [
+  { exts: ['mp4','mkv','avi','mov','wmv','flv','webm','m4v','ts','rmvb'], icon: Film,     color: '#ef4444' },
+  { exts: ['mp3','flac','aac','wav','ogg','m4a','opus','wma','ape'],       icon: Music,    color: '#8b5cf6' },
+  { exts: ['jpg','jpeg','png','gif','webp','bmp','svg','tiff','heic'],      icon: ImgIcon,  color: '#3b82f6' },
+  { exts: ['zip','rar','7z','tar','gz','bz2','xz','zst','iso'],             icon: Archive,  color: '#f59e0b' },
+  { exts: ['pdf','doc','docx','xls','xlsx','ppt','pptx','txt','md','epub'], icon: FileText, color: '#10b981' },
+  { exts: ['js','ts','jsx','tsx','py','go','java','cpp','c','h','rs','php','html','css','json'], icon: Code2, color: '#06b6d4' },
+];
+const getFileType = (filename) => {
+  const ext = (filename || '').split('.').pop().toLowerCase();
+  return FILE_TYPES.find(t => t.exts.includes(ext)) || { icon: File, color: '#94a3b8' };
+};
+
+// ─── Animated status messages ─────────────────────────────────────────────────
+const STATUS_MSGS = [
+  '连接 DHT 网络...',
+  '搜索 tracker 节点...',
+  '等待 peer 响应...',
+  '获取元数据中...',
+  '努力搜寻中，请稍候...',
+  '快要找到了...',
+];
+
+// ─── App ──────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [magnet, setMagnet]     = useState('');
+  const [parsing, setParsing]   = useState(false);
+  const [result, setResult]     = useState(null);
+  const [error, setError]       = useState(null);
+  const [statusIdx, setStatus]  = useState(0);
+  const [stats, setStats]       = useState(null);
+  const [copied, setCopied]     = useState(false);
+  const [copiedMag, setCopiedMag] = useState(false);
+
+  // Admin
+  const [isAdmin, setIsAdmin]         = useState(false);
+  const [adminPass, setAdminPass]     = useState('');
+  const [honeypot, setHoneypot]       = useState('');
+  const [adminStats, setAdminStats]   = useState([]);
   const [adminTrackers, setAdminTrackers] = useState([]);
   const [adminSettings, setAdminSettings] = useState({});
-  const [adminPass, setAdminPass] = useState('');
-  const [honeypot, setHoneypot] = useState(''); // Honeypot field
+  const [cleaning, setCleaning]       = useState(false);
 
+  // Cycle status messages while parsing
   useEffect(() => {
-    if (adminToken) {
-      setIsAdmin(true);
-      fetchAdminData();
+    if (!parsing) { setStatus(0); return; }
+    const iv = setInterval(() => setStatus(i => (i + 1) % STATUS_MSGS.length), 2800);
+    return () => clearInterval(iv);
+  }, [parsing]);
+
+  const extractHash = (input) => {
+    const bare = input.trim();
+    if (/^[0-9a-fA-F]{40}$/i.test(bare)) return bare.toLowerCase();
+    const m = bare.match(/btih:([0-9a-fA-F]{40})/i);
+    return m ? m[1].toLowerCase() : null;
+  };
+
+  const handleSuccess = useCallback((data) => {
+    setParsing(false);
+    setResult(data);
+    setError(null);
+    if (data.infoHash) {
+      fetchStats(data.infoHash);
+      // Update URL so this result is shareable / bookmark-able
+      const p = new URLSearchParams(window.location.search);
+      p.set('hash', data.infoHash);
+      window.history.replaceState(null, '', `?${p}`);
     }
   }, []);
+
+  const fetchStats = async (hash) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/stats/${hash}`);
+      if (res.ok) setStats(await res.json());
+    } catch (_) {}
+  };
+
+  const doSearch = useCallback(async (input) => {
+    const clean = input.trim();
+    if (!clean) return;
+    const hash = extractHash(clean);
+    setParsing(true);
+    setResult(null);
+    setError(null);
+    setStats(null);
+    setCopied(false);
+    setCopiedMag(false);
+
+    // Tier 1: DB cache (instant)
+    if (hash) {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/parse/cache?hash=${hash}`);
+        if (res.ok) { handleSuccess(await res.json()); return; }
+      } catch (_) {}
+    }
+
+    // Tier 2: backend DHT parse
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/parse?magnet=${encodeURIComponent(clean)}`);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Backend failed');
+      }
+      handleSuccess(await res.json());
+    } catch (err) {
+      setParsing(false);
+      setError('解析失败：该磁力链接暂无活跃节点，请稍后重试。');
+    }
+  }, [handleSuccess]);
+
+  // URL param auto-search on mount
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const h = p.get('hash') || p.get('h');
+    const m = p.get('magnet') || p.get('m');
+    if (h && /^[0-9a-fA-F]{40}$/i.test(h.trim())) {
+      const v = h.trim().toLowerCase();
+      setMagnet(v);
+      doSearch(v);
+    } else if (m) {
+      const v = decodeURIComponent(m);
+      setMagnet(v);
+      doSearch(v);
+    }
+    const token = localStorage.getItem('adminToken');
+    if (token) { setIsAdmin(true); fetchAdminData(); }
+  }, []);
+
+  const copyHash = async () => {
+    if (!result?.infoHash) return;
+    await navigator.clipboard.writeText(result.infoHash).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const copyMagnet = async () => {
+    if (!result?.infoHash) return;
+    await navigator.clipboard.writeText(`magnet:?xt=urn:btih:${result.infoHash}`).catch(() => {});
+    setCopiedMag(true);
+    setTimeout(() => setCopiedMag(false), 2000);
+  };
+
+  const formatSize = (bytes) => {
+    if (!bytes) return '0 B';
+    const k = 1024, s = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + s[i];
+  };
+
+  // ── Admin helpers ────────────────────────────────────────────────────────
+  const fetchAdminData = async () => {
+    const token = localStorage.getItem('adminToken');
+    try {
+      const [sR, tR, setR] = await Promise.all([
+        fetch(`${BACKEND_URL}/api/admin/stats`,    { headers: { 'X-Admin-Token': token } }),
+        fetch(`${BACKEND_URL}/api/admin/trackers`, { headers: { 'X-Admin-Token': token } }),
+        fetch(`${BACKEND_URL}/api/admin/settings`, { headers: { 'X-Admin-Token': token } }),
+      ]);
+      if (sR.ok)   setAdminStats(await sR.json());
+      if (tR.ok)   setAdminTrackers(await tR.json());
+      if (setR.ok) setAdminSettings(await setR.json());
+    } catch (_) {}
+  };
 
   const handleAdminLogin = async (e) => {
     e.preventDefault();
     try {
-      const response = await fetch(`${BACKEND_URL}/api/admin/login`, {
+      const res = await fetch(`${BACKEND_URL}/api/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: honeypot, password: adminPass })
+        body: JSON.stringify({ username: honeypot, password: adminPass }),
       });
-      if (response.ok) {
-        const data = await response.json();
-        setAdminToken(data.token);
-        localStorage.setItem('adminToken', data.token);
+      if (res.ok) {
+        const d = await res.json();
+        localStorage.setItem('adminToken', d.token);
         setIsAdmin(true);
         fetchAdminData();
-      } else {
-        alert('Access Denied');
-      }
-    } catch (err) {
-      alert('Login Error');
-    }
-  };
-
-  const fetchAdminData = async () => {
-    const token = localStorage.getItem('adminToken');
-    try {
-      const statsRes = await fetch(`${BACKEND_URL}/api/admin/stats`, {
-        headers: { 'X-Admin-Token': token }
-      });
-      const trackersRes = await fetch(`${BACKEND_URL}/api/admin/trackers`, {
-        headers: { 'X-Admin-Token': token }
-      });
-      const settingsRes = await fetch(`${BACKEND_URL}/api/admin/settings`, {
-        headers: { 'X-Admin-Token': token }
-      });
-      if (statsRes.ok) setAdminStats(await statsRes.json());
-      if (trackersRes.ok) setAdminTrackers(await trackersRes.json());
-      if (settingsRes.ok) setAdminSettings(await settingsRes.json());
-    } catch (err) {
-      console.error('Admin fetch error:', err);
-    }
+      } else alert('Access Denied');
+    } catch (_) { alert('Login Error'); }
   };
 
   const saveSettings = async () => {
@@ -73,9 +195,9 @@ function App() {
     await fetch(`${BACKEND_URL}/api/admin/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
-      body: JSON.stringify(adminSettings)
+      body: JSON.stringify(adminSettings),
     });
-    alert('Settings saved. Refresh or update path manually.');
+    alert('Settings saved.');
     fetchAdminData();
   };
 
@@ -84,307 +206,141 @@ function App() {
     await fetch(`${BACKEND_URL}/api/admin/trackers/toggle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
-      body: JSON.stringify({ id, enabled: current === 1 ? 0 : 1 })
+      body: JSON.stringify({ id, enabled: current === 1 ? 0 : 1 }),
     });
     fetchAdminData();
   };
 
   const deleteTracker = async (id) => {
-    if (!confirm('Are you sure?')) return;
+    if (!confirm('删除该 tracker？')) return;
     const token = localStorage.getItem('adminToken');
     await fetch(`${BACKEND_URL}/api/admin/trackers/${id}`, {
-      method: 'DELETE',
-      headers: { 'X-Admin-Token': token }
+      method: 'DELETE', headers: { 'X-Admin-Token': token },
     });
     fetchAdminData();
   };
 
-  // Extract info hash from magnet URI or bare 40-char hex
-  const extractInfoHash = (magnetURI) => {
-    const bare = magnetURI.trim();
-    if (/^[0-9a-fA-F]{40}$/i.test(bare)) return bare.toLowerCase();
-    const m = bare.match(/btih:([0-9a-fA-F]{40})/i);
-    return m ? m[1].toLowerCase() : null;
-  };
-
-  const handleParse = async (e) => {
-    if (e) e.preventDefault();
-    if (!magnet.trim()) return;
-
-    const cleanMagnet = magnet.trim();
-    const infoHash = extractInfoHash(cleanMagnet);
-    setParsing(true);
-    setResult(null);
-    setError(null);
-
-    // ── 第一级：服务器缓存（瞬间） ──
-    if (infoHash) {
-      try {
-        setStatus('查询缓存...');
-        const res = await fetch(`${BACKEND_URL}/api/parse/cache?hash=${infoHash}`);
-        if (res.ok) {
-          const data = await res.json();
-          setStatus('');
-          handleSuccess(data);
-          return;
-        }
-      } catch (e) { /* 网络错误忽略，继续下一级 */ }
-    }
-
-    // ── 第二级：后端解析 ──
+  const cleanTrackers = async () => {
+    if (!confirm('将并发检测所有 tracker 可达性，删除无响应的。耗时较长，确定继续？')) return;
+    const token = localStorage.getItem('adminToken');
+    setCleaning(true);
     try {
-      setStatus('服务器解析中...');
-      const data = await parseWithBackend(cleanMagnet);
-      handleSuccess(data);
-    } catch (err) {
-      setParsing(false);
-      setStatus('');
-      setError('解析失败：该磁力链接暂无活跃节点，请稍后重试。');
-    }
+      const res = await fetch(`${BACKEND_URL}/api/admin/trackers/clean`, {
+        method: 'POST', headers: { 'X-Admin-Token': token },
+      });
+      const d = await res.json();
+      if (res.ok) { alert(`清理完成，删除了 ${d.removed} 个无效 tracker`); fetchAdminData(); }
+      else alert('清理失败: ' + d.error);
+    } finally { setCleaning(false); }
   };
 
-  const parseWithBackend = async (magnetURI) => {
-    try {
-      const response = await fetch(`${BACKEND_URL}/api/parse?magnet=${encodeURIComponent(magnetURI)}`);
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || 'Backend failed');
-      }
-      const result = await response.json();
-      return result;
-    } catch (err) {
-      throw err;
-    }
-  };
+  // ── Admin page ────────────────────────────────────────────────────────────
+  const path = window.location.pathname.replace(/\/$/, '');
+  const isHoneypot = path === '/admin';
+  const isRealAdmin = path === '/10w_gl888';
 
-  const handleSuccess = (data) => {
-    setParsing(false);
-    setStatus('');
-    setResult(data);
-    if (data.infoHash) fetchStats(data.infoHash);
-  };
-
-  const fetchStats = async (hash) => {
-    try {
-      const response = await fetch(`${BACKEND_URL}/api/stats/${hash}`);
-      if (response.ok) {
-        const data = await response.json();
-        setStats(data);
-      }
-    } catch (err) {
-      console.error('Stats fetch error:', err);
-    }
-  };
-
-  const downloadTorrent = () => {
-    if (!result) return;
-    
-    let blob;
-    if (result.torrentFile) {
-      // From frontend parsing (Buffer)
-      blob = new Blob([result.torrentFile], { type: 'application/x-bittorrent' });
-    } else {
-      // If from backend, we might need an endpoint or just rely on magnet for now
-      // For this demo, let's assume we can generate a simple one or show alert
-      alert('Backend-parsed torrent export is limited. Use the magnet link directly.');
-      return;
-    }
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${result.name || 'download'}.torrent`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const formatSize = (bytes) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  // Improved Path Detection
-  const path = window.location.pathname.replace(/\/$/, ''); // Remove trailing slash
-  const isHoneypotPath = path === '/admin';
-  const isRealAdminPath = path === '/10w_gl888'; 
-
-  if (isHoneypotPath || isRealAdminPath) {
+  if (isHoneypot || isRealAdmin) {
     return (
-      <div className="container" style={{ paddingTop: '80px' }}>
-        <header className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold">System Management</h1>
-          <a href="/" className="btn-google" style={{ textDecoration: 'none' }}>Back to Home</a>
+      <div className="admin-container">
+        <header className="admin-header">
+          <h1>System Management</h1>
+          <a href="/" className="btn-back">← 返回</a>
         </header>
 
         {!isAdmin ? (
-          <div className="glass-card" style={{ maxWidth: '400px', margin: '0 auto' }}>
-            <h2 style={{ fontSize: '22px', fontWeight: '500', textAlign: 'center', marginBottom: '30px' }}>Admin Sign in</h2>
-            <form onSubmit={handleAdminLogin} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {isHoneypotPath && (
-                <input 
-                  type="text" 
-                  placeholder="Email or phone"
-                  value={honeypot} 
-                  onChange={(e) => setHoneypot(e.target.value)}
-                  className="search-box"
-                  style={{ borderRadius: '4px', height: 'auto', padding: '12px' }}
-                />
+          <div className="login-card">
+            <h2>管理员登录</h2>
+            <form onSubmit={handleAdminLogin} className="login-form">
+              {isHoneypot && (
+                <input type="text" placeholder="Email or phone"
+                  value={honeypot} onChange={e => setHoneypot(e.target.value)}
+                  className="field-input" />
               )}
-              <input 
-                type="password" 
-                placeholder="Enter your password" 
-                value={adminPass}
-                onChange={(e) => setAdminPass(e.target.value)}
-                className="search-box"
-                style={{ borderRadius: '4px', height: 'auto', padding: '12px' }}
-              />
-              <button type="submit" className="btn-primary">Sign in</button>
+              <input type="password" placeholder="密码"
+                value={adminPass} onChange={e => setAdminPass(e.target.value)}
+                className="field-input" />
+              <button type="submit" className="btn-primary">登录</button>
             </form>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '40px' }}>
-            {/* Stats Section */}
-            <div className="result-card">
-              <h3 className="mb-4 flex items-center gap-2"><Activity size={18} /> Popular Hashes</h3>
-              <table className="table-clean">
-                <thead>
-                  <tr><th>Hash</th><th>Queries</th><th>Last Seen</th></tr>
-                </thead>
+          <div className="admin-panels">
+            {/* Stats */}
+            <div className="panel-card">
+              <h3><Activity size={14} /> 热门哈希</h3>
+              <table className="data-table">
+                <thead><tr><th>Hash</th><th>查询次数</th><th>最近查询</th></tr></thead>
                 <tbody>
                   {adminStats.map((s, i) => (
                     <tr key={i}>
-                      <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>{s.info_hash}</td>
+                      <td className="mono">{s.info_hash}</td>
                       <td>{s.query_count}</td>
-                      <td style={{ color: 'var(--text-dim)' }}>{s.last_query_time}</td>
+                      <td className="muted">{s.last_query_time}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
 
-            {/* Trackers Section */}
-            <div className="result-card">
-              <h3 className="mb-4 flex items-center gap-2"><ShieldCheck size={18} /> Tracker Management
-                <button
-                  onClick={async () => {
-                    if (!window.confirm('将并发检测所有 tracker 可达性，删除无响应的。耗时较长，确定继续？')) return;
-                    const token = localStorage.getItem('adminToken');
-                    const btn = document.getElementById('cleanBtn');
-                    btn.disabled = true;
-                    btn.textContent = '检测中...';
-                    try {
-                      const res = await fetch(`${BACKEND_URL}/api/admin/trackers/clean`, {
-                        method: 'POST',
-                        headers: { 'X-Admin-Token': token },
-                      });
-                      const data = await res.json();
-                      if (res.ok) {
-                        alert(`清理完成，删除了 ${data.removed} 个无效 tracker`);
-                        fetchAdminData();
-                      } else {
-                        alert('清理失败: ' + data.error);
-                      }
-                    } finally {
-                      btn.disabled = false;
-                      btn.textContent = '一键清理';
-                    }
-                  }}
-                  id="cleanBtn"
-                  className="btn-primary"
-                  style={{ marginLeft: 'auto', padding: '0 14px', height: '30px', fontSize: '12px' }}
-                >
-                  一键清理
+            {/* Trackers */}
+            <div className="panel-card">
+              <div className="panel-header">
+                <h3><ShieldCheck size={14} /> Tracker 管理</h3>
+                <button className="btn-clean" onClick={cleanTrackers} disabled={cleaning}>
+                  <RefreshCw size={13} className={cleaning ? 'spin' : ''} />
+                  {cleaning ? '检测中...' : '一键清理'}
                 </button>
-              </h3>
-              
-              {/* Add tracker form */}
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  const textarea = e.target.elements.trackerUrl;
-                  const url = textarea.value.trim();
-                  if (!url) return;
-                  const lineCount = url.split('\n').filter(l => l.trim()).length;
-                  const token = localStorage.getItem('adminToken');
-                  const res = await fetch(`${BACKEND_URL}/api/admin/trackers/add`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
-                    body: JSON.stringify({ url }),
-                  });
-                  if (res.ok) {
-                    const data = await res.json();
-                    textarea.value = '';
-                    fetchAdminData();
-                    if (lineCount > 1) alert(`成功添加 ${data.count ?? lineCount} 条 Tracker`);
-                  } else {
-                    alert('添加失败');
-                  }
-                }}
-                style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}
-              >
-                <textarea
-                  name="trackerUrl"
-                  rows={3}
-                  placeholder={`支持批量粘贴，每行一个：\nudp://tracker.opentrackr.org:1337/announce\nwss://tracker.openwebtorrent.com\nhttps://tracker1.520.jp:443/announce`}
-                  className="search-box"
-                  style={{ width: '100%', borderRadius: '4px', padding: '8px 12px', fontSize: '13px', resize: 'vertical', fontFamily: 'monospace' }}
-                />
-                <button type="submit" className="btn-primary" style={{ alignSelf: 'flex-end', padding: '0 20px', height: '36px' }}>
-                  添加
-                </button>
+              </div>
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                const ta = e.target.elements.trackerUrl;
+                const url = ta.value.trim();
+                if (!url) return;
+                const token = localStorage.getItem('adminToken');
+                const res = await fetch(`${BACKEND_URL}/api/admin/trackers/add`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
+                  body: JSON.stringify({ url }),
+                });
+                if (res.ok) { const d = await res.json(); ta.value = ''; fetchAdminData(); alert(`已添加 ${d.count} 条`); }
+                else alert('添加失败');
+              }} className="tracker-add-form">
+                <textarea name="trackerUrl" rows={3} className="field-input mono-input"
+                  placeholder={"支持批量粘贴，每行一个：\nudp://tracker.opentrackr.org:1337/announce\nwss://tracker.openwebtorrent.com"} />
+                <button type="submit" className="btn-primary" style={{ alignSelf: 'flex-end' }}>添加</button>
               </form>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div className="tracker-list">
                 {adminTrackers.map((t, i) => (
-                  <div key={i} className="justify-between items-center" style={{ display: 'flex', padding: '10px', borderBottom: '1px solid #f1f3f4' }}>
-                    <span className="truncate" style={{ fontSize: '13px', maxWidth: '60%' }}>{t.url}</span>
-                    <div className="flex gap-4">
-                      <button 
-                        onClick={() => toggleTracker(t.id, t.enabled)}
-                        style={{ background: 'none', border: 'none', color: t.enabled ? '#1e8e3e' : '#d93025', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                      >
-                        {t.enabled ? 'Enabled' : 'Disabled'}
+                  <div key={i} className="tracker-row">
+                    <span className="tracker-url">{t.url}</span>
+                    <div className="tracker-actions">
+                      <button className={`status-btn ${t.enabled ? 'enabled' : 'disabled'}`}
+                        onClick={() => toggleTracker(t.id, t.enabled)}>
+                        {t.enabled ? 'ON' : 'OFF'}
                       </button>
-                      <button 
-                        onClick={() => deleteTracker(t.id)}
-                        style={{ background: 'none', border: 'none', color: '#70757a', cursor: 'pointer', fontSize: '12px' }}
-                      >
-                        Delete
-                      </button>
+                      <button className="del-btn" onClick={() => deleteTracker(t.id)}>×</button>
                     </div>
                   </div>
                 ))}
               </div>
             </div>
-            <div className="result-card">
-              <h3 className="mb-4">System Settings</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '500px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-dim)', marginBottom: '5px' }}>Admin Secret Path</label>
-                  <input 
-                    type="text" 
-                    value={adminSettings.admin_path || ''} 
-                    onChange={(e) => setAdminSettings({...adminSettings, admin_path: e.target.value})}
-                    className="search-box"
-                    style={{ borderRadius: '4px', height: '40px', padding: '0 12px' }}
-                  />
+
+            {/* Settings */}
+            <div className="panel-card">
+              <h3>系统设置</h3>
+              <div className="settings-form">
+                <div className="field-group">
+                  <label>管理后台路径</label>
+                  <input type="text" className="field-input"
+                    value={adminSettings.admin_path || ''}
+                    onChange={e => setAdminSettings({ ...adminSettings, admin_path: e.target.value })} />
                 </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-dim)', marginBottom: '5px' }}>Tracker Sync Source</label>
-                  <input 
-                    type="text" 
-                    value={adminSettings.tracker_sync_source || ''} 
-                    onChange={(e) => setAdminSettings({...adminSettings, tracker_sync_source: e.target.value})}
-                    className="search-box"
-                    style={{ borderRadius: '4px', height: '40px', padding: '0 12px' }}
-                  />
+                <div className="field-group">
+                  <label>Tracker 同步源</label>
+                  <input type="text" className="field-input"
+                    value={adminSettings.tracker_sync_source || ''}
+                    onChange={e => setAdminSettings({ ...adminSettings, tracker_sync_source: e.target.value })} />
                 </div>
-                <button onClick={saveSettings} className="btn-primary" style={{ alignSelf: 'flex-start' }}>Save Settings</button>
+                <button className="btn-primary" onClick={saveSettings}>保存设置</button>
               </div>
             </div>
           </div>
@@ -393,81 +349,130 @@ function App() {
     );
   }
 
+  // ── Main page ─────────────────────────────────────────────────────────────
   return (
-    <div className="container">
-      <div className="home-wrapper">
-        <img src="/logo.png" alt="Google Magnet" className="logo-main" />
-        
-        <form onSubmit={handleParse} className="search-box-container">
-          <Search className="search-icon" size={20} />
-          <input 
-            type="text" 
-            className="search-box"
-            placeholder="Search magnet link..."
-            value={magnet}
-            onChange={(e) => setMagnet(e.target.value)}
-            disabled={parsing}
-          />
+    <div className="page-wrap">
+      <main className="main-center">
+        {/* Logo */}
+        <motion.div className="brand"
+          initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .4 }}>
+          <img src="/logo.png" alt="Magnet Search" className="brand-logo" />
+        </motion.div>
+
+        {/* Search */}
+        <form onSubmit={e => { e.preventDefault(); doSearch(magnet); }} className="search-wrap">
+          <div className={`search-box${parsing ? ' searching' : ''}`}>
+            <Search className="search-ico" size={18} />
+            <input
+              type="text"
+              className="search-input"
+              placeholder="粘贴磁力链接 或 40位哈希值…"
+              value={magnet}
+              onChange={e => { setMagnet(e.target.value); setError(null); }}
+              disabled={parsing}
+              autoFocus
+            />
+            {magnet && !parsing && (
+              <button type="button" className="clear-btn"
+                onClick={() => { setMagnet(''); setResult(null); setError(null); setStats(null); window.history.replaceState(null, '', '/'); }}>
+                <X size={15} />
+              </button>
+            )}
+          </div>
+
+          {/* Progress bar (seamlessly attached below search box) */}
+          <AnimatePresence>
+            {parsing && (
+              <motion.div className="progress-track"
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <div className="progress-bar" />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="search-actions">
+            <button type="submit" className="btn-search" disabled={parsing || !magnet.trim()}>
+              {parsing ? '解析中…' : '解析磁力'}
+            </button>
+          </div>
         </form>
 
-        <div className="flex gap-4">
-          <button onClick={handleParse} className="btn-google">Magnet Search</button>
-          <button onClick={() => setMagnet('')} className="btn-google">I'm Feeling Lucky</button>
-        </div>
+        {/* Cycling status */}
+        <AnimatePresence mode="wait">
+          {parsing && (
+            <motion.p key={statusIdx} className="status-msg"
+              initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -5 }} transition={{ duration: .25 }}>
+              <span className="status-dot" />
+              {STATUS_MSGS[statusIdx]}
+            </motion.p>
+          )}
+        </AnimatePresence>
 
-        {parsing && (
-          <div className="mt-8 flex items-center gap-2 text-text-dim">
-            <Loader2 className="animate-spin" size={18} />
-            <span>{status}</span>
-          </div>
-        )}
+        {/* Error */}
+        <AnimatePresence>
+          {error && (
+            <motion.div className="error-box"
+              initial={{ opacity: 0, scale: .97 }} animate={{ opacity: 1, scale: 1 }}>
+              <AlertCircle size={16} />
+              <span>{error}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-        {error && (
-          <div className="mt-8 text-red-500 text-sm">{error}</div>
-        )}
-
+        {/* Result */}
         <AnimatePresence>
           {result && (
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="w-full mt-10"
-            >
-              <div className="result-card">
-                <div className="flex justify-between items-start mb-6">
-                  <div>
-                    <h2 className="text-xl font-medium mb-1">{result.name}</h2>
-                    <p className="text-text-dim text-xs font-mono">{result.infoHash}</p>
-                  </div>
-                  <button onClick={downloadTorrent} className="btn-primary flex items-center gap-2">
-                    <Download size={16} /> Export .torrent
+            <motion.div className="result-wrap"
+              initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: .38, ease: [.16, 1, .3, 1] }}>
+
+              {/* Header */}
+              <div className="result-header">
+                <h2 className="result-name">{result.name}</h2>
+                <div className="hash-row">
+                  <code className="hash-text">{result.infoHash}</code>
+                  <button className="icon-btn" onClick={copyHash} title="复制哈希">
+                    {copied ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
+                  </button>
+                  <button className="icon-btn" onClick={copyMagnet} title="复制磁力链接">
+                    {copiedMag ? <Check size={14} color="#10b981" /> : <Link2 size={14} />}
                   </button>
                 </div>
-
-                <div className="border-t border-border-light pt-4">
-                  <p className="text-sm text-text-dim mb-4">Files ({result.files.length}) • Total: {formatSize(result.totalSize)}</p>
-                  <div className="space-y-1">
-                    {result.files.map((file, i) => (
-                      <div key={i} className="file-row">
-                        <span className="truncate">{file.path}</span>
-                        <span className="text-text-dim">{formatSize(file.size)}</span>
-                      </div>
-                    ))}
-                  </div>
+                <div className="result-badges">
+                  <span className="badge">{result.files?.length ?? 1} 个文件</span>
+                  <span className="badge">{formatSize(result.totalSize)}</span>
+                  {stats && <span className="badge accent">已查询 {stats.query_count} 次</span>}
                 </div>
+              </div>
+
+              {/* File list */}
+              <div className="file-list">
+                {(result.files || []).map((file, i) => {
+                  const ft = getFileType(file.path);
+                  const Icon = ft.icon;
+                  return (
+                    <div key={i} className={`file-row ${i % 2 === 0 ? 'even' : 'odd'}`}>
+                      <span className="file-icon" style={{ color: ft.color }}>
+                        <Icon size={15} />
+                      </span>
+                      <span className="file-path" title={file.path}>{file.path}</span>
+                      <span className="file-size">{formatSize(file.size)}</span>
+                    </div>
+                  );
+                })}
               </div>
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
+      </main>
 
-      <footer className="fixed bottom-0 left-0 w-full p-4 flex justify-center gap-6 text-sm text-text-dim bg-gray-50 border-t border-border-light">
-        <span>Privacy</span>
-        <span>Terms</span>
-        <a href="/10w_gl888" style={{ color: 'inherit', textDecoration: 'none' }}>Settings</a>
+      <footer className="site-footer">
+        <span>隐私保护</span>
+        <span>·</span>
+        <a href="/10w_gl888">管理</a>
       </footer>
     </div>
   );
 }
 
-export default App;
