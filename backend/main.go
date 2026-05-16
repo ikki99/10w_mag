@@ -21,7 +21,7 @@ import (
 )
 
 const ADMIN_PASS = "10w_gl888" // fallback if DB not initialized
-const VERSION = "1.0.0"
+const VERSION = "1.5.0"
 
 //go:embed all:dist
 var frontendFS embed.FS
@@ -91,13 +91,13 @@ func main() {
 			admin.POST("/trackers/add", handleAddTracker)
 			admin.POST("/trackers/toggle", handleToggleTracker)
 			admin.DELETE("/trackers/:id", handleDeleteTracker)
-		admin.POST("/trackers/clean", handleCleanTrackers)
-					admin.GET("/trackers/export", handleExportTrackers)
+			admin.POST("/trackers/clean", handleCleanTrackers)
+			admin.GET("/trackers/export", handleExportTrackers)
 
-					// Settings APIs
-					admin.GET("/settings", handleGetSettings)
-					admin.POST("/settings", handleSaveSettings)
-					admin.POST("/change-password", handleChangePassword)
+			// Settings APIs
+			admin.GET("/settings", handleGetSettings)
+			admin.POST("/settings", handleSaveSettings)
+			admin.POST("/change-password", handleChangePassword)
 		}
 	}
 
@@ -157,6 +157,13 @@ func handleCacheCheck(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "invalid cache"})
 		return
 	}
+
+	// If the cached version is old and lacks the torrent data, treat as miss
+	if result.TorrentBase64 == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "incomplete cache"})
+		return
+	}
+
 	db.IncrementStats(hash, "")
 	c.JSON(http.StatusOK, result)
 }
@@ -176,15 +183,18 @@ func handleParse(c *gin.Context) {
 		infoHash = strings.ToLower(infoHash)
 	}
 
-	// 1. Check Cache
+	// 1. Check Cache (with "must have torrent data" requirement)
 	if infoHash != "" {
 		cached, err := db.GetMetadata(infoHash)
 		if err == nil && cached != "" {
 			var result parser.ParseResult
 			if json.Unmarshal([]byte(cached), &result) == nil {
-				db.IncrementStats(infoHash, "") // Just increment count
-				c.JSON(http.StatusOK, result)
-				return
+				// Only return cache if it's complete with seed data
+				if result.TorrentBase64 != "" {
+					db.IncrementStats(infoHash, "")
+					c.JSON(http.StatusOK, result)
+					return
+				}
 			}
 		}
 	}
