@@ -522,7 +522,6 @@ export default function App() {
                 <div className="result-badges">
                   <span className="badge">{result.files?.length ?? 1} 个文件</span>
                   <span className="badge">{formatSize(result.totalSize)}</span>
-                  {stats && <span className="badge accent">已查询 {stats.query_count} 次</span>}
                   {result.torrentBase64 && (
                     <button className="btn-dl" onClick={downloadTorrent} title="下载 .torrent 种子文件">
                       <Download size={13} />
