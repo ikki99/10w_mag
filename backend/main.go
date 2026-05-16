@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -25,6 +27,12 @@ const VERSION = "0.3.1"
 var frontendFS embed.FS
 
 func main() {
+	// Production mode: suppress GIN debug output
+	gin.SetMode(gin.ReleaseMode)
+
+	// Filter noisy "Unsolicited response" logs from net/http keep-alive internals
+	log.SetOutput(&filteredWriter{w: os.Stderr, skip: "Unsolicited response received on idle HTTP channel"})
+
 	// Initialize Database
 	if err := db.Init(); err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
@@ -48,6 +56,8 @@ func main() {
 
 	// Setup Gin
 	r := gin.Default()
+	// Only trust loopback proxies (nginx on same host); avoids "trusted all proxies" warning
+	r.SetTrustedProxies([]string{"127.0.0.1", "::1"})
 
 	// CORS Middleware
 	r.Use(func(c *gin.Context) {
@@ -371,4 +381,17 @@ func handleSaveSettings(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Settings saved"})
+}
+
+// filteredWriter wraps an io.Writer and drops lines containing a given substring.
+type filteredWriter struct {
+	w    io.Writer
+	skip string
+}
+
+func (f *filteredWriter) Write(p []byte) (n int, err error) {
+	if bytes.Contains(p, []byte(f.skip)) {
+		return len(p), nil // silently discard
+	}
+	return f.w.Write(p)
 }
