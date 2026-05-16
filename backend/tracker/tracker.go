@@ -35,36 +35,52 @@ func syncAndClean() {
 
 func fetchRemoteTrackers() {
 	log.Println("Starting tracker sync...")
-	url := db.GetSetting("tracker_sync_source")
-	if url == "" {
-		url = "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all_ws.txt"
+	sources := db.GetSetting("tracker_sync_source")
+	if sources == "" {
+		sources = "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt"
 	}
 
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Printf("Error fetching trackers: %v\n", err)
-		return
-	}
-	defer resp.Body.Close()
+	sourceList := strings.Split(sources, "\n")
+	var allTrackers []string
+	seen := make(map[string]struct{})
 
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("Tracker sync source returned HTTP %d, skipping\n", resp.StatusCode)
-		return
-	}
-
-	var trackers []string
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" && (strings.HasPrefix(line, "udp://") || strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") || strings.HasPrefix(line, "wss://") || strings.HasPrefix(line, "ws://")) {
-			trackers = append(trackers, line)
+	for _, rawURL := range sourceList {
+		rawURL = strings.TrimSpace(rawURL)
+		if rawURL == "" {
+			continue
 		}
+		resp, err := http.Get(rawURL)
+		if err != nil {
+			log.Printf("Error fetching tracker source %s: %v\n", rawURL, err)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			log.Printf("Tracker source %s returned HTTP %d, skipping\n", rawURL, resp.StatusCode)
+			continue
+		}
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			if strings.HasPrefix(line, "udp://") || strings.HasPrefix(line, "http://") ||
+				strings.HasPrefix(line, "https://") || strings.HasPrefix(line, "wss://") ||
+				strings.HasPrefix(line, "ws://") {
+				if _, dup := seen[line]; !dup {
+					seen[line] = struct{}{}
+					allTrackers = append(allTrackers, line)
+				}
+			}
+		}
+		resp.Body.Close()
 	}
 
-	if err := db.SaveTrackers(trackers); err != nil {
+	if err := db.SaveTrackers(allTrackers); err != nil {
 		log.Printf("Error saving trackers: %v\n", err)
 	} else {
-		log.Printf("Synced %d trackers\n", len(trackers))
+		log.Printf("Synced %d trackers from %d sources\n", len(allTrackers), len(sourceList))
 	}
 }
 

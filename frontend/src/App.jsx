@@ -46,11 +46,14 @@ export default function App() {
   // Admin
   const [isAdmin, setIsAdmin]         = useState(false);
   const [adminPass, setAdminPass]     = useState('');
+  const [adminUser, setAdminUser]     = useState('admin');
   const [honeypot, setHoneypot]       = useState('');
+  const [adminTab, setAdminTab]       = useState('stats');
   const [adminStats, setAdminStats]   = useState([]);
   const [adminTrackers, setAdminTrackers] = useState([]);
   const [adminSettings, setAdminSettings] = useState({});
   const [cleaning, setCleaning]       = useState(false);
+  const [pwForm, setPwForm]           = useState({ old: '', newUser: '', newPass: '', confirm: '' });
 
   // Cycle status messages while parsing
   useEffect(() => {
@@ -199,14 +202,14 @@ export default function App() {
       const res = await fetch(`${BACKEND_URL}/api/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: honeypot, password: adminPass }),
+        body: JSON.stringify({ trap: honeypot, username: adminUser, password: adminPass }),
       });
       if (res.ok) {
         const d = await res.json();
         localStorage.setItem('adminToken', d.token);
         setIsAdmin(true);
         fetchAdminData();
-      } else alert('Access Denied');
+      } else alert('登录失败：用户名或密码错误');
     } catch (_) { alert('Login Error'); }
   };
 
@@ -254,6 +257,40 @@ export default function App() {
     } finally { setCleaning(false); }
   };
 
+  const exportTrackers = () => {
+    const token = localStorage.getItem('adminToken');
+    const a = document.createElement('a');
+    a.href = `${BACKEND_URL}/api/admin/trackers/export`;
+    // attach token via URL param trick: use window.open with fetch blob instead
+    fetch(`${BACKEND_URL}/api/admin/trackers/export`, { headers: { 'X-Admin-Token': token } })
+      .then(r => r.blob())
+      .then(blob => {
+        const url = URL.createObjectURL(blob);
+        a.href = url; a.download = 'trackers.txt';
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a); URL.revokeObjectURL(url);
+      });
+  };
+
+  const changePassword = async (e) => {
+    e.preventDefault();
+    if (pwForm.newPass !== pwForm.confirm) { alert('两次新密码不一致'); return; }
+    if (pwForm.newPass.length < 6) { alert('密码至少6位'); return; }
+    const token = localStorage.getItem('adminToken');
+    const res = await fetch(`${BACKEND_URL}/api/admin/change-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
+      body: JSON.stringify({ old_password: pwForm.old, new_username: pwForm.newUser, new_password: pwForm.newPass }),
+    });
+    const d = await res.json();
+    if (res.ok) {
+      alert(d.message);
+      localStorage.setItem('adminToken', d.new_token);
+      setPwForm({ old: '', newUser: '', newPass: '', confirm: '' });
+      fetchAdminData();
+    } else alert(d.error || '失败');
+  };
+
   // ── Admin page ────────────────────────────────────────────────────────────
   const path = window.location.pathname.replace(/\/$/, '');
   const isHoneypot = path === '/admin';
@@ -276,152 +313,226 @@ export default function App() {
                   value={honeypot} onChange={e => setHoneypot(e.target.value)}
                   className="field-input" />
               )}
+              {!isHoneypot && (
+                <input type="text" placeholder="用户名"
+                  value={adminUser} onChange={e => setAdminUser(e.target.value)}
+                  className="field-input" autoComplete="username" />
+              )}
               <input type="password" placeholder="密码"
                 value={adminPass} onChange={e => setAdminPass(e.target.value)}
-                className="field-input" />
+                className="field-input" autoComplete="current-password" />
               <button type="submit" className="btn-primary">登录</button>
             </form>
           </div>
         ) : (
-          <div className="admin-panels">
-            {/* Stats */}
-            <div className="panel-card">
-              <h3><Activity size={14} /> 热门哈希</h3>
-              <table className="data-table">
-                <thead><tr><th>Hash</th><th>查询次数</th><th>最近查询</th></tr></thead>
-                <tbody>
-                  {adminStats.map((s, i) => (
-                    <tr key={i}>
-                      <td className="mono">{s.info_hash}</td>
-                      <td>{s.query_count}</td>
-                      <td className="muted">{s.last_query_time}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div>
+            {/* Tab nav */}
+            <div className="admin-tabs">
+              {[
+                { key: 'stats',    label: '📊 统计' },
+                { key: 'trackers', label: '🔗 Trackers' },
+                { key: 'settings', label: '⚙️ 设置' },
+              ].map(t => (
+                <button key={t.key}
+                  className={`admin-tab${adminTab === t.key ? ' active' : ''}`}
+                  onClick={() => setAdminTab(t.key)}>
+                  {t.label}
+                </button>
+              ))}
             </div>
 
-            {/* Trackers */}
-            <div className="panel-card">
-              <div className="panel-header">
-                <h3><ShieldCheck size={14} /> Tracker 管理</h3>
-                <button className="btn-clean" onClick={cleanTrackers} disabled={cleaning}>
-                  <RefreshCw size={13} className={cleaning ? 'spin' : ''} />
-                  {cleaning ? '检测中...' : '一键清理'}
-                </button>
+            {/* ── Tab: Stats ── */}
+            {adminTab === 'stats' && (
+              <div className="panel-card">
+                <h3><Activity size={14} /> 热门哈希 <span className="field-badge">点击查看详情</span></h3>
+                <table className="data-table">
+                  <thead><tr><th>Hash</th><th>查询次数</th><th>最近查询</th></tr></thead>
+                  <tbody>
+                    {adminStats.map((s, i) => (
+                      <tr key={i} className="hash-link-row"
+                        onClick={() => window.open(`/?hash=${s.info_hash}`, '_blank')}>
+                        <td className="mono">{s.info_hash}</td>
+                        <td>{s.query_count}</td>
+                        <td className="muted">{s.last_query_time}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <form onSubmit={async (e) => {
-                e.preventDefault();
-                const ta = e.target.elements.trackerUrl;
-                const url = ta.value.trim();
-                if (!url) return;
-                const token = localStorage.getItem('adminToken');
-                const res = await fetch(`${BACKEND_URL}/api/admin/trackers/add`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
-                  body: JSON.stringify({ url }),
-                });
-                if (res.ok) { const d = await res.json(); ta.value = ''; fetchAdminData(); alert(`已添加 ${d.count} 条`); }
-                else alert('添加失败');
-              }} className="tracker-add-form">
-                <textarea name="trackerUrl" rows={3} className="field-input mono-input"
-                  placeholder={"支持批量粘贴，每行一个：\nudp://tracker.opentrackr.org:1337/announce\nwss://tracker.openwebtorrent.com"} />
-                <button type="submit" className="btn-primary" style={{ alignSelf: 'flex-end' }}>添加</button>
-              </form>
-              <div className="tracker-list">
-                {adminTrackers.map((t, i) => (
-                  <div key={i} className="tracker-row">
-                    <span className="tracker-url">{t.url}</span>
-                    <div className="tracker-actions">
-                      <button className={`status-btn ${t.enabled ? 'enabled' : 'disabled'}`}
-                        onClick={() => toggleTracker(t.id, t.enabled)}>
-                        {t.enabled ? 'ON' : 'OFF'}
+            )}
+
+            {/* ── Tab: Trackers ── */}
+            {adminTab === 'trackers' && (
+              <div className="admin-panels">
+                <div className="panel-card">
+                  <div className="panel-header">
+                    <h3><ShieldCheck size={14} /> Tracker 管理
+                      <span className="field-badge" style={{ marginLeft: 8 }}>
+                        {adminSettings.tracker_count || 0} / {adminSettings.tracker_max_count || 200}
+                      </span>
+                    </h3>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="btn-clean" onClick={exportTrackers} title="导出已启用的 tracker 列表">
+                        ↓ 导出
                       </button>
-                      <button className="del-btn" onClick={() => deleteTracker(t.id)}>×</button>
+                      <button className="btn-clean" onClick={cleanTrackers} disabled={cleaning}>
+                        <RefreshCw size={13} className={cleaning ? 'spin' : ''} />
+                        {cleaning ? '检测中...' : '一键清理'}
+                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Settings */}
-            <div className="panel-card">
-              <h3>系统设置</h3>
-              <div className="settings-form">
-                <div className="field-group">
-                  <label>管理后台路径</label>
-                  <input type="text" className="field-input"
-                    value={adminSettings.admin_path || ''}
-                    onChange={e => setAdminSettings({ ...adminSettings, admin_path: e.target.value })} />
-                </div>
-                <div className="field-group">
-                  <label>Tracker 同步源</label>
-                  <input type="text" className="field-input"
-                    value={adminSettings.tracker_sync_source || ''}
-                    onChange={e => setAdminSettings({ ...adminSettings, tracker_sync_source: e.target.value })} />
-                </div>
-                <div className="field-group">
-                  <label>DHT 并发解析数 <span className="field-badge">防过载</span></label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <input type="number" min="1" max="200" className="field-input" style={{ width: 90 }}
-                      value={adminSettings.parse_concurrency || '15'}
-                      onChange={e => setAdminSettings({ ...adminSettings, parse_concurrency: e.target.value })} />
-                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>个（当前运行中的 DHT 解析最大数）</span>
+                  <form onSubmit={async (e) => {
+                    e.preventDefault();
+                    const ta = e.target.elements.trackerUrl;
+                    const url = ta.value.trim();
+                    if (!url) return;
+                    const token = localStorage.getItem('adminToken');
+                    const res = await fetch(`${BACKEND_URL}/api/admin/trackers/add`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
+                      body: JSON.stringify({ url }),
+                    });
+                    if (res.ok) { const d = await res.json(); ta.value = ''; fetchAdminData(); alert(`已添加 ${d.count} 条`); }
+                    else alert('添加失败');
+                  }} className="tracker-add-form">
+                    <textarea name="trackerUrl" rows={3} className="field-input mono-input"
+                      placeholder={"支持批量粘贴，每行一个：\nudp://tracker.opentrackr.org:1337/announce\nwss://tracker.openwebtorrent.com"} />
+                    <button type="submit" className="btn-primary" style={{ alignSelf: 'flex-end' }}>添加</button>
+                  </form>
+                  <div className="tracker-list">
+                    {adminTrackers.map((t, i) => (
+                      <div key={i} className="tracker-row">
+                        <span className="tracker-url">{t.url}</span>
+                        <div className="tracker-actions">
+                          <button className={`status-btn ${t.enabled ? 'enabled' : 'disabled'}`}
+                            onClick={() => toggleTracker(t.id, t.enabled)}>
+                            {t.enabled ? 'ON' : 'OFF'}
+                          </button>
+                          <button className="del-btn" onClick={() => deleteTracker(t.id)}>×</button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-                <button className="btn-primary" onClick={saveSettings}>保存设置</button>
               </div>
-            </div>
+            )}
 
-            {/* VPS Guide */}
-            <div className="panel-card guide-card">
-              <h3>📖 小白指引：不同配置 VPS 推荐设置</h3>
-              <p className="guide-intro">
-                『DHT 并发解析数』是关键性能参数。每个 DHT 解析任务会占用 ~25 个 TCP/UDP 连接和部分内存，
-                设置过大会导致文件描述符耗尽或 OOM。
-              </p>
-              <table className="guide-table">
-                <thead>
-                  <tr>
-                    <th>VPS 配置</th>
-                    <th>推荐并发数</th>
-                    <th>预计年容量</th>
-                    <th>备注</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="guide-row-warn">
-                    <td>1核 512M</td><td><strong>3–5</strong></td><td>日均 1K–2K 新hash</td><td>保守，避免 OOM</td>
-                  </tr>
-                  <tr>
-                    <td>1核 1G</td><td><strong>10</strong></td><td>日均 5K–8K 新hash</td><td>默认推荐</td>
-                  </tr>
-                  <tr>
-                    <td>2核 2G</td><td><strong>20</strong></td><td>日均 1.5万 新hash</td><td>性价比高</td>
-                  </tr>
-                  <tr>
-                    <td>4核 4G</td><td><strong>40</strong></td><td>日均 3万+ 新hash</td><td>高性能</td>
-                  </tr>
-                  <tr>
-                    <td>8核 8G+</td><td><strong>80–100</strong></td><td>不受并发限制</td><td>需同步调大 ulimit</td>
-                  </tr>
-                </tbody>
-              </table>
-              <div className="guide-tips">
-                <div className="guide-tip">
-                  <span className="tip-icon">&#9888;</span>
-                  <span><strong>ulimit -n</strong>：服务器默认文件描述符上限为 1024。批发与并发数大于 10 时，建议在启动脚本中添加：<code>ulimit -n 65535</code></span>
+            {/* ── Tab: Settings ── */}
+            {adminTab === 'settings' && (
+              <div className="admin-panels">
+                {/* General Settings */}
+                <div className="panel-card">
+                  <h3>系统设置</h3>
+                  <div className="settings-form">
+                    <div className="field-group">
+                      <label>管理后台路径</label>
+                      <input type="text" className="field-input"
+                        value={adminSettings.admin_path || ''}
+                        onChange={e => setAdminSettings({ ...adminSettings, admin_path: e.target.value })} />
+                    </div>
+                    <div className="field-group">
+                      <label>Tracker 同步源 <span className="field-badge">每行一个</span></label>
+                      <textarea rows={5} className="field-input mono-input"
+                        value={adminSettings.tracker_sync_source || ''}
+                        onChange={e => setAdminSettings({ ...adminSettings, tracker_sync_source: e.target.value })} />
+                    </div>
+                    <div className="field-group">
+                      <label>Tracker 最大数量上限</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <input type="number" min="10" max="2000" className="field-input" style={{ width: 90 }}
+                          value={adminSettings.tracker_max_count || '200'}
+                          onChange={e => setAdminSettings({ ...adminSettings, tracker_max_count: e.target.value })} />
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>推荐 100–300，清理后自动补充</span>
+                      </div>
+                    </div>
+                    <div className="field-group">
+                      <label>DHT 并发解析数 <span className="field-badge">防过载</span></label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <input type="number" min="1" max="200" className="field-input" style={{ width: 90 }}
+                          value={adminSettings.parse_concurrency || '15'}
+                          onChange={e => setAdminSettings({ ...adminSettings, parse_concurrency: e.target.value })} />
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>修改即生效，无需重启</span>
+                      </div>
+                    </div>
+                    <button className="btn-primary" onClick={saveSettings}>保存设置</button>
+                  </div>
                 </div>
-                <div className="guide-tip">
-                  <span className="tip-icon">&#128274;</span>
-                  <span><strong>缓存命中率：</strong>已解析过的 hash 直接返回数据库缓存，<em>不占用</em>并发数。高命中率时 1核也可支撑数千 QPS。</span>
+
+                {/* Change credentials */}
+                <div className="panel-card">
+                  <h3>修改登录凭据</h3>
+                  <form onSubmit={changePassword} className="settings-form">
+                    <div className="field-group">
+                      <label>当前密码</label>
+                      <input type="password" className="field-input" value={pwForm.old}
+                        onChange={e => setPwForm({ ...pwForm, old: e.target.value })} />
+                    </div>
+                    <div className="field-group">
+                      <label>新用户名（留空保持不变）</label>
+                      <input type="text" className="field-input" placeholder={adminSettings.admin_username || 'admin'}
+                        value={pwForm.newUser}
+                        onChange={e => setPwForm({ ...pwForm, newUser: e.target.value })} />
+                    </div>
+                    <div className="field-group">
+                      <label>新密码（至少6位）</label>
+                      <input type="password" className="field-input" value={pwForm.newPass}
+                        onChange={e => setPwForm({ ...pwForm, newPass: e.target.value })} />
+                    </div>
+                    <div className="field-group">
+                      <label>确认新密码</label>
+                      <input type="password" className="field-input" value={pwForm.confirm}
+                        onChange={e => setPwForm({ ...pwForm, confirm: e.target.value })} />
+                    </div>
+                    <button type="submit" className="btn-primary">更新凭据</button>
+                  </form>
                 </div>
-                <div className="guide-tip">
-                  <span className="tip-icon">&#128257;</span>
-                  <span><strong>修改即生效：</strong>保存设置后无需重启服务。</span>
+
+                {/* VPS Guide */}
+                <div className="panel-card guide-card">
+                  <h3>📖 小白指引：不同配置 VPS 推荐设置</h3>
+                  <p className="guide-intro">
+                    『DHT 并发解析数』是关键性能参数。每个 DHT 解析任务会占用 ~25 个 TCP/UDP 连接和部分内存，
+                    设置过大会导致文件描述符耗尽或 OOM。
+                  </p>
+                  <table className="guide-table">
+                    <thead>
+                      <tr><th>VPS 配置</th><th>推荐并发数</th><th>Tracker 上限</th><th>备注</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr className="guide-row-warn">
+                        <td>1核 512M</td><td><strong>3–5</strong></td><td>100</td><td>保守，避免 OOM</td>
+                      </tr>
+                      <tr>
+                        <td>1核 1G</td><td><strong>10</strong></td><td>200</td><td>默认推荐</td>
+                      </tr>
+                      <tr>
+                        <td>2核 2G</td><td><strong>20</strong></td><td>300</td><td>性价比高</td>
+                      </tr>
+                      <tr>
+                        <td>4核 4G</td><td><strong>40</strong></td><td>500</td><td>高性能</td>
+                      </tr>
+                      <tr>
+                        <td>8核 8G+</td><td><strong>80–100</strong></td><td>不限</td><td>需同步调大 ulimit</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div className="guide-tips">
+                    <div className="guide-tip">
+                      <span className="tip-icon">&#9888;</span>
+                      <span><strong>ulimit -n</strong>：服务器默认文件描述符上限为 1024。并发数大于 10 时，建议启动脚本添加：<code>ulimit -n 65535</code></span>
+                    </div>
+                    <div className="guide-tip">
+                      <span className="tip-icon">&#128274;</span>
+                      <span><strong>缓存命中率：</strong>已解析过的 hash 直接返回数据库缓存，<em>不占用</em>并发数。高命中率时 1核也可支撑数千 QPS。</span>
+                    </div>
+                    <div className="guide-tip">
+                      <span className="tip-icon">&#128257;</span>
+                      <span><strong>Tracker 数量越多越好吗？</strong>不完全是。有效 tracker 过多反而增加启动开销，200–300 个活跃 tracker 是最优区间，配合一键清理定期淘汰死链。</span>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         )}
       </div>

@@ -20,8 +20,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const ADMIN_PASS = "10w_gl888"
-const VERSION = "0.3.3"
+const ADMIN_PASS = "10w_gl888" // fallback if DB not initialized
+const VERSION = "0.4.0"
 
 //go:embed all:dist
 var frontendFS embed.FS
@@ -91,11 +91,13 @@ func main() {
 			admin.POST("/trackers/add", handleAddTracker)
 			admin.POST("/trackers/toggle", handleToggleTracker)
 			admin.DELETE("/trackers/:id", handleDeleteTracker)
-			admin.POST("/trackers/clean", handleCleanTrackers)
+		admin.POST("/trackers/clean", handleCleanTrackers)
+					admin.GET("/trackers/export", handleExportTrackers)
 
-			// Settings APIs
-			admin.GET("/settings", handleGetSettings)
-			admin.POST("/settings", handleSaveSettings)
+					// Settings APIs
+					admin.GET("/settings", handleGetSettings)
+					admin.POST("/settings", handleSaveSettings)
+					admin.POST("/change-password", handleChangePassword)
 		}
 	}
 
@@ -235,7 +237,11 @@ func handleTrackers(c *gin.Context) {
 func authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.GetHeader("X-Admin-Token")
-		if token != ADMIN_PASS {
+		storedPass := db.GetSetting("admin_password")
+		if storedPass == "" {
+			storedPass = ADMIN_PASS
+		}
+		if token != storedPass {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			c.Abort()
 			return
@@ -246,7 +252,8 @@ func authMiddleware() gin.HandlerFunc {
 
 func handleAdminLogin(c *gin.Context) {
 	var input struct {
-		Honeypot string `json:"username"` // This is the honeypot
+		Trap     string `json:"trap"`     // honeypot field
+		Username string `json:"username"` // real username
 		Password string `json:"password"`
 	}
 
@@ -255,20 +262,28 @@ func handleAdminLogin(c *gin.Context) {
 		return
 	}
 
-	// Honeypot check: If the fake "username" field is filled, reject!
-	if input.Honeypot != "" {
+	// Honeypot check
+	if input.Trap != "" {
 		log.Printf("Honeypot triggered by IP: %s", c.ClientIP())
-		// Artificial delay to waste attacker's time
 		time.Sleep(2 * time.Second)
 		c.JSON(http.StatusForbidden, gin.H{"error": "Bot detected"})
 		return
 	}
 
-	if input.Password == ADMIN_PASS {
-		c.JSON(http.StatusOK, gin.H{"token": ADMIN_PASS})
+	storedUser := db.GetSetting("admin_username")
+	if storedUser == "" {
+		storedUser = "admin"
+	}
+	storedPass := db.GetSetting("admin_password")
+	if storedPass == "" {
+		storedPass = ADMIN_PASS
+	}
+
+	if input.Username == storedUser && input.Password == storedPass {
+		c.JSON(http.StatusOK, gin.H{"token": storedPass})
 	} else {
 		time.Sleep(1 * time.Second)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid password"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 	}
 }
 
@@ -357,9 +372,12 @@ func handleCleanTrackers(c *gin.Context) {
 func handleGetSettings(c *gin.Context) {
 	settings := map[string]string{
 		"admin_path":          db.GetSetting("admin_path"),
+		"admin_username":      db.GetSetting("admin_username"),
 		"backend_enabled":     db.GetSetting("backend_enabled"),
 		"tracker_sync_source": db.GetSetting("tracker_sync_source"),
 		"parse_concurrency":   db.GetSetting("parse_concurrency"),
+		"tracker_max_count":   db.GetSetting("tracker_max_count"),
+		"tracker_count":       fmt.Sprintf("%d", db.GetTrackerCount()),
 	}
 	c.JSON(http.StatusOK, settings)
 }
@@ -381,6 +399,46 @@ func handleSaveSettings(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Settings saved"})
+}
+
+func handleExportTrackers(c *gin.Context) {
+	urls, err := db.GetTrackers() // enabled only
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Header("Content-Disposition", "attachment; filename=\"trackers.txt\"")
+	c.Header("Content-Type", "text/plain; charset=utf-8")
+	c.String(http.StatusOK, strings.Join(urls, "\n"))
+}
+
+func handleChangePassword(c *gin.Context) {
+	var input struct {
+		OldPassword string `json:"old_password"`
+		NewUsername string `json:"new_username"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+	storedPass := db.GetSetting("admin_password")
+	if storedPass == "" {
+		storedPass = ADMIN_PASS
+	}
+	if input.OldPassword != storedPass {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "旧密码不正确"})
+		return
+	}
+	if len(input.NewPassword) < 6 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "新密码至少6位"})
+		return
+	}
+	if input.NewUsername != "" {
+		db.SetSetting("admin_username", input.NewUsername)
+	}
+	db.SetSetting("admin_password", input.NewPassword)
+	c.JSON(http.StatusOK, gin.H{"message": "凭据已更新，请重新登录", "new_token": input.NewPassword})
 }
 
 // filteredWriter wraps an io.Writer and drops lines containing a given substring.

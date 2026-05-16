@@ -198,6 +198,25 @@ body {
   padding: 6px 14px; border-radius: 7px; border: 1px solid var(--border);
   transition: background .15s;
 }
+
+/* Tab navigation */
+.admin-tabs {
+  display: flex; gap: 4px; margin-bottom: 24px;
+  border-bottom: 2px solid var(--border); padding-bottom: 0;
+}
+.admin-tab {
+  background: none; border: none; cursor: pointer;
+  padding: 10px 22px; font-size: 14px; font-weight: 500; color: var(--text-muted);
+  border-bottom: 2px solid transparent; margin-bottom: -2px;
+  transition: color .15s, border-color .15s; border-radius: 6px 6px 0 0;
+}
+.admin-tab:hover { color: var(--text); background: #f8f9fa; }
+.admin-tab.active { color: var(--primary); border-bottom-color: var(--primary); background: none; }
+
+/* Clickable hash row in stats table */
+.hash-link-row { cursor: pointer; transition: background .15s; }
+.hash-link-row:hover { background: #eff6ff !important; }
+.hash-link-row:hover .mono { color: var(--primary); text-decoration: underline; }
 .btn-back:hover { background: #f1f3f4; }
 
 .login-card {

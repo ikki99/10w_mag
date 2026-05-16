@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	_ "modernc.org/sqlite"
 )
@@ -54,9 +55,12 @@ func Init() error {
 	// Default Settings
 	defaults := map[string]string{
 		"admin_path":          "10w_gl888",
+		"admin_username":      "admin",
+		"admin_password":      "10w_gl888",
 		"backend_enabled":     "1",
-		"tracker_sync_source": "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all_ws.txt",
+		"tracker_sync_source": "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt\nhttps://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all_udp.txt\nhttps://raw.githubusercontent.com/XIU2/TrackersListCollection/master/best.txt\nhttps://raw.githubusercontent.com/XIU2/TrackersListCollection/master/all.txt",
 		"parse_concurrency":   "15",
+		"tracker_max_count":   "200",
 	}
 
 	for k, v := range defaults {
@@ -217,6 +221,18 @@ func DeleteTracker(id string) error {
 	return err
 }
 
+// GetTrackerCount 返回当前 tracker 总数
+func GetTrackerCount() int {
+	var n int
+	database.QueryRow("SELECT COUNT(*) FROM trackers").Scan(&n)
+	return n
+}
+
+// GetEnabledTrackerURLs 返回所有启用的 tracker URL（供导出）
+func GetEnabledTrackerURLs() ([]string, error) {
+	return GetTrackers()
+}
+
 // DeleteDeadTrackers 批量删除指定 URL 的 tracker，返回实际删除数量
 func DeleteDeadTrackers(urls []string) (int, error) {
 	if len(urls) == 0 {
@@ -261,14 +277,32 @@ func GetAllTrackerURLs() ([]string, error) {
 }
 
 func SaveTrackers(urls []string) error {
+	// Enforce max tracker count
+	maxCount := 200
+	if mc := GetSetting("tracker_max_count"); mc != "" {
+		if n, err := strconv.Atoi(mc); err == nil && n > 0 {
+			maxCount = n
+		}
+	}
+
 	tx, err := database.Begin()
 	if err != nil {
 		return err
 	}
 
+	var currentCount int
+	database.QueryRow("SELECT COUNT(*) FROM trackers").Scan(&currentCount)
+
 	stmt, _ := tx.Prepare("INSERT OR IGNORE INTO trackers (url) VALUES (?)")
 	for _, url := range urls {
-		stmt.Exec(url)
+		if currentCount >= maxCount {
+			break
+		}
+		res, err := stmt.Exec(url)
+		if err == nil {
+			n, _ := res.RowsAffected()
+			currentCount += int(n)
+		}
 	}
 	stmt.Close()
 
