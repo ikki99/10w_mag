@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Build outputs
+dist/
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Databases
+*.db
+*.db-journal
+
+# IDEs
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
