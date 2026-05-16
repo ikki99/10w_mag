@@ -2,9 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Search, Film, Music, Image as ImgIcon, Archive,
   FileText, Code2, File, Copy, Check, Link2, Download,
-  ShieldCheck, Activity, AlertCircle, X, RefreshCw
+  ShieldCheck, Activity, AlertCircle, X, RefreshCw, Globe, Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import translations from './i18n';
 
 const BACKEND_URL = 'http://localhost:6467';
 
@@ -22,18 +23,9 @@ const getFileType = (filename) => {
   return FILE_TYPES.find(t => t.exts.includes(ext)) || { icon: File, color: '#94a3b8' };
 };
 
-// ─── Animated status messages ─────────────────────────────────────────────────
-const STATUS_MSGS = [
-  '连接 DHT 网络...',
-  '搜索 tracker 节点...',
-  '等待 peer 响应...',
-  '获取元数据中...',
-  '努力搜寻中，请稍候...',
-  '快要找到了...',
-];
-
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
+  const [lang, setLang]         = useState('en');
   const [magnet, setMagnet]     = useState('');
   const [parsing, setParsing]   = useState(false);
   const [result, setResult]     = useState(null);
@@ -55,8 +47,31 @@ export default function App() {
   const [cleaning, setCleaning]       = useState(false);
   const [pwForm, setPwForm]           = useState({ old: '', newUser: '', newPass: '', confirm: '' });
 
+  const t = (key) => translations[lang]?.[key] || translations['en'][key] || key;
+
+  const STATUS_MSGS = [
+    t('stageCache'),
+    t('stage1'),
+    t('stage2'),
+    t('stage3'),
+    t('stage4'),
+    t('stage5'),
+  ];
+
   // Cycle status messages while parsing
   useEffect(() => {
+    // 1. Language Detection
+    const userLang = navigator.language || navigator.userLanguage;
+    let detected = 'en';
+    if (userLang.startsWith('zh')) {
+      detected = (userLang.toLowerCase().includes('tw') || userLang.toLowerCase().includes('hk') || userLang.toLowerCase().includes('mo')) ? 'zh-TW' : 'zh-CN';
+    } else if (userLang.startsWith('ja')) detected = 'ja';
+    else if (userLang.startsWith('ko')) detected = 'ko';
+    else if (userLang.startsWith('es')) detected = 'es';
+    setLang(detected);
+    document.documentElement.lang = detected;
+
+    // 2. Cycle messages
     if (!parsing) { setStatus(0); return; }
     const iv = setInterval(() => setStatus(i => (i + 1) % STATUS_MSGS.length), 2800);
     return () => clearInterval(iv);
@@ -75,7 +90,6 @@ export default function App() {
     setError(null);
     if (data.infoHash) {
       fetchStats(data.infoHash);
-      // Update URL so this result is shareable / bookmark-able
       const p = new URLSearchParams(window.location.search);
       p.set('hash', data.infoHash);
       window.history.replaceState(null, '', `?${p}`);
@@ -100,7 +114,6 @@ export default function App() {
     setCopied(false);
     setCopiedMag(false);
 
-    // Tier 1: DB cache (instant)
     if (hash) {
       try {
         const res = await fetch(`${BACKEND_URL}/api/parse/cache?hash=${hash}`);
@@ -108,8 +121,6 @@ export default function App() {
       } catch (_) {}
     }
 
-    // Tier 2: backend DHT parse
-    // If bare hash, construct full magnet URI so backend can recognise it
     const magnetURI = hash && !clean.startsWith('magnet:')
       ? `magnet:?xt=urn:btih:${hash}`
       : clean;
@@ -122,11 +133,10 @@ export default function App() {
       handleSuccess(await res.json());
     } catch (err) {
       setParsing(false);
-      setError('解析失败：该磁力链接暂无活跃节点，请稍后重试。');
+      setError(t('errorParse'));
     }
   }, [handleSuccess]);
 
-  // URL param auto-search on mount
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
     const h = p.get('hash') || p.get('h');
@@ -159,19 +169,33 @@ export default function App() {
   };
 
   const downloadTorrent = () => {
-    if (!result?.torrentBase64) return;
-    const binary = atob(result.torrentBase64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], { type: 'application/x-bittorrent' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${result.name || result.infoHash}.torrent`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    if (!result) return;
+    
+    let blob;
+    // 1. If we have the raw Buffer/Uint8Array from WebTorrent (Stage 1 Success)
+    if (result.torrentFile) {
+      blob = new Blob([result.torrentFile], { type: 'application/x-bittorrent' });
+    } 
+    // 2. If we have base64 from backend (Stage 2 Success)
+    else if (result.torrentBase64) {
+      const binaryString = atob(result.torrentBase64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+      blob = new Blob([bytes], { type: 'application/x-bittorrent' });
+    }
+
+    if (blob) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${result.name || result.infoHash}.torrent`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } else {
+      alert('Metadata not sufficient to generate .torrent file.');
+    }
   };
 
   const formatSize = (bytes) => {
@@ -181,7 +205,6 @@ export default function App() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + s[i];
   };
 
-  // ── Admin helpers ────────────────────────────────────────────────────────
   const fetchAdminData = async () => {
     const token = localStorage.getItem('adminToken');
     try {
@@ -209,7 +232,7 @@ export default function App() {
         localStorage.setItem('adminToken', d.token);
         setIsAdmin(true);
         fetchAdminData();
-      } else alert('登录失败：用户名或密码错误');
+      } else alert(t('loginFail'));
     } catch (_) { alert('Login Error'); }
   };
 
@@ -220,7 +243,7 @@ export default function App() {
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
       body: JSON.stringify(adminSettings),
     });
-    alert('Settings saved.');
+    alert(t('saved'));
     fetchAdminData();
   };
 
@@ -235,7 +258,7 @@ export default function App() {
   };
 
   const deleteTracker = async (id) => {
-    if (!confirm('删除该 tracker？')) return;
+    if (!confirm(t('confirmDel'))) return;
     const token = localStorage.getItem('adminToken');
     await fetch(`${BACKEND_URL}/api/admin/trackers/${id}`, {
       method: 'DELETE', headers: { 'X-Admin-Token': token },
@@ -244,7 +267,7 @@ export default function App() {
   };
 
   const cleanTrackers = async () => {
-    if (!confirm('将并发检测所有 tracker 可达性，删除无响应的。耗时较长，确定继续？')) return;
+    if (!confirm(t('confirmClean'))) return;
     const token = localStorage.getItem('adminToken');
     setCleaning(true);
     try {
@@ -252,16 +275,14 @@ export default function App() {
         method: 'POST', headers: { 'X-Admin-Token': token },
       });
       const d = await res.json();
-      if (res.ok) { alert(`清理完成，删除了 ${d.removed} 个无效 tracker`); fetchAdminData(); }
-      else alert('清理失败: ' + d.error);
+      if (res.ok) { alert(t('cleanDone').replace('{n}', d.removed)); fetchAdminData(); }
+      else alert(t('cleanFail') + ': ' + d.error);
     } finally { setCleaning(false); }
   };
 
   const exportTrackers = () => {
     const token = localStorage.getItem('adminToken');
     const a = document.createElement('a');
-    a.href = `${BACKEND_URL}/api/admin/trackers/export`;
-    // attach token via URL param trick: use window.open with fetch blob instead
     fetch(`${BACKEND_URL}/api/admin/trackers/export`, { headers: { 'X-Admin-Token': token } })
       .then(r => r.blob())
       .then(blob => {
@@ -274,8 +295,8 @@ export default function App() {
 
   const changePassword = async (e) => {
     e.preventDefault();
-    if (pwForm.newPass !== pwForm.confirm) { alert('两次新密码不一致'); return; }
-    if (pwForm.newPass.length < 6) { alert('密码至少6位'); return; }
+    if (pwForm.newPass !== pwForm.confirm) { alert(t('pwMismatch')); return; }
+    if (pwForm.newPass.length < 6) { alert(t('pwShort')); return; }
     const token = localStorage.getItem('adminToken');
     const res = await fetch(`${BACKEND_URL}/api/admin/change-password`, {
       method: 'POST',
@@ -288,25 +309,25 @@ export default function App() {
       localStorage.setItem('adminToken', d.new_token);
       setPwForm({ old: '', newUser: '', newPass: '', confirm: '' });
       fetchAdminData();
-    } else alert(d.error || '失败');
+    } else alert(d.error || 'Failed');
   };
 
-  // ── Admin page ────────────────────────────────────────────────────────────
   const path = window.location.pathname.replace(/\/$/, '');
   const isHoneypot = path === '/admin';
-  const isRealAdmin = path === '/10w_gl888';
+  const adminPath = '/' + (window.__ADMIN_PATH__ || '10w_gl888');
+  const isRealAdmin = path === adminPath;
 
   if (isHoneypot || isRealAdmin) {
     return (
       <div className="admin-container">
         <header className="admin-header">
-          <h1>System Management</h1>
-          <a href="/" className="btn-back">← 返回</a>
+          <h1>{t('adminTitle')}</h1>
+          <a href="/" className="btn-back">← {t('back')}</a>
         </header>
 
         {!isAdmin ? (
           <div className="login-card">
-            <h2>管理员登录</h2>
+            <h2>{t('adminLogin')}</h2>
             <form onSubmit={handleAdminLogin} className="login-form">
               {isHoneypot && (
                 <input type="text" placeholder="Email or phone"
@@ -314,24 +335,23 @@ export default function App() {
                   className="field-input" />
               )}
               {!isHoneypot && (
-                <input type="text" placeholder="用户名"
+                <input type="text" placeholder={t('username')}
                   value={adminUser} onChange={e => setAdminUser(e.target.value)}
                   className="field-input" autoComplete="username" />
               )}
-              <input type="password" placeholder="密码"
+              <input type="password" placeholder={t('password')}
                 value={adminPass} onChange={e => setAdminPass(e.target.value)}
                 className="field-input" autoComplete="current-password" />
-              <button type="submit" className="btn-primary">登录</button>
+              <button type="submit" className="btn-primary">{t('loginBtn')}</button>
             </form>
           </div>
         ) : (
           <div>
-            {/* Tab nav */}
             <div className="admin-tabs">
               {[
-                { key: 'stats',    label: '📊 统计' },
-                { key: 'trackers', label: '🔗 Trackers' },
-                { key: 'settings', label: '⚙️ 设置' },
+                { key: 'stats',    label: t('tabStats') },
+                { key: 'trackers', label: t('tabTrackers') },
+                { key: 'settings', label: t('tabSettings') },
               ].map(t => (
                 <button key={t.key}
                   className={`admin-tab${adminTab === t.key ? ' active' : ''}`}
@@ -341,12 +361,11 @@ export default function App() {
               ))}
             </div>
 
-            {/* ── Tab: Stats ── */}
             {adminTab === 'stats' && (
               <div className="panel-card">
-                <h3><Activity size={14} /> 热门哈希 <span className="field-badge">点击查看详情</span></h3>
+                <h3><Activity size={14} /> {t('hotHashes')} <span className="field-badge">{t('clickDetail')}</span></h3>
                 <table className="data-table">
-                  <thead><tr><th>Hash</th><th>查询次数</th><th>最近查询</th></tr></thead>
+                  <thead><tr><th>Hash</th><th>{t('queries')}</th><th>{t('lastTime')}</th></tr></thead>
                   <tbody>
                     {adminStats.map((s, i) => (
                       <tr key={i} className="hash-link-row"
@@ -361,23 +380,22 @@ export default function App() {
               </div>
             )}
 
-            {/* ── Tab: Trackers ── */}
             {adminTab === 'trackers' && (
               <div className="admin-panels">
                 <div className="panel-card">
                   <div className="panel-header">
-                    <h3><ShieldCheck size={14} /> Tracker 管理
+                    <h3><ShieldCheck size={14} /> {t('trackerMgmt')}
                       <span className="field-badge" style={{ marginLeft: 8 }}>
                         {adminSettings.tracker_count || 0} / {adminSettings.tracker_max_count || 200}
                       </span>
                     </h3>
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <button className="btn-clean" onClick={exportTrackers} title="导出已启用的 tracker 列表">
-                        ↓ 导出
+                      <button className="btn-clean" onClick={exportTrackers} title={t('export')}>
+                        ↓ {t('export')}
                       </button>
                       <button className="btn-clean" onClick={cleanTrackers} disabled={cleaning}>
                         <RefreshCw size={13} className={cleaning ? 'spin' : ''} />
-                        {cleaning ? '检测中...' : '一键清理'}
+                        {cleaning ? t('cleaning') : t('clean')}
                       </button>
                     </div>
                   </div>
@@ -392,12 +410,12 @@ export default function App() {
                       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
                       body: JSON.stringify({ url }),
                     });
-                    if (res.ok) { const d = await res.json(); ta.value = ''; fetchAdminData(); alert(`已添加 ${d.count} 条`); }
-                    else alert('添加失败');
+                    if (res.ok) { const d = await res.json(); ta.value = ''; fetchAdminData(); alert(t('added').replace('{n}', d.count)); }
+                    else alert(t('addFail'));
                   }} className="tracker-add-form">
                     <textarea name="trackerUrl" rows={3} className="field-input mono-input"
-                      placeholder={"支持批量粘贴，每行一个：\nudp://tracker.opentrackr.org:1337/announce\nwss://tracker.openwebtorrent.com"} />
-                    <button type="submit" className="btn-primary" style={{ alignSelf: 'flex-end' }}>添加</button>
+                      placeholder={t('placeholderTrackers')} />
+                    <button type="submit" className="btn-primary" style={{ alignSelf: 'flex-end' }}>{t('add')}</button>
                   </form>
                   <div className="tracker-list">
                     {adminTrackers.map((t, i) => (
@@ -417,119 +435,64 @@ export default function App() {
               </div>
             )}
 
-            {/* ── Tab: Settings ── */}
             {adminTab === 'settings' && (
               <div className="admin-panels">
-                {/* General Settings */}
                 <div className="panel-card">
-                  <h3>系统设置</h3>
+                  <h3>{t('sysSettings')}</h3>
                   <div className="settings-form">
                     <div className="field-group">
-                      <label>管理后台路径</label>
+                      <label>{t('adminPath')}</label>
                       <input type="text" className="field-input"
                         value={adminSettings.admin_path || ''}
                         onChange={e => setAdminSettings({ ...adminSettings, admin_path: e.target.value })} />
                     </div>
                     <div className="field-group">
-                      <label>Tracker 同步源 <span className="field-badge">每行一个</span></label>
+                      <label>{t('syncSource')}</label>
                       <textarea rows={5} className="field-input mono-input"
                         value={adminSettings.tracker_sync_source || ''}
                         onChange={e => setAdminSettings({ ...adminSettings, tracker_sync_source: e.target.value })} />
                     </div>
                     <div className="field-group">
-                      <label>Tracker 最大数量上限</label>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <input type="number" min="10" max="2000" className="field-input" style={{ width: 90 }}
-                          value={adminSettings.tracker_max_count || '200'}
-                          onChange={e => setAdminSettings({ ...adminSettings, tracker_max_count: e.target.value })} />
-                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>推荐 100–300，清理后自动补充</span>
-                      </div>
+                      <label>{t('maxTrackers')}</label>
+                      <input type="number" min="10" max="2000" className="field-input" style={{ width: 90 }}
+                        value={adminSettings.tracker_max_count || '200'}
+                        onChange={e => setAdminSettings({ ...adminSettings, tracker_max_count: e.target.value })} />
                     </div>
                     <div className="field-group">
-                      <label>DHT 并发解析数 <span className="field-badge">防过载</span></label>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <input type="number" min="1" max="200" className="field-input" style={{ width: 90 }}
-                          value={adminSettings.parse_concurrency || '15'}
-                          onChange={e => setAdminSettings({ ...adminSettings, parse_concurrency: e.target.value })} />
-                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>修改即生效，无需重启</span>
-                      </div>
+                      <label>{t('concurrency')}</label>
+                      <input type="number" min="1" max="200" className="field-input" style={{ width: 90 }}
+                        value={adminSettings.parse_concurrency || '15'}
+                        onChange={e => setAdminSettings({ ...adminSettings, parse_concurrency: e.target.value })} />
                     </div>
-                    <button className="btn-primary" onClick={saveSettings}>保存设置</button>
+                    <button className="btn-primary" onClick={saveSettings}>{t('save')}</button>
                   </div>
                 </div>
 
-                {/* Change credentials */}
                 <div className="panel-card">
-                  <h3>修改登录凭据</h3>
+                  <h3>{t('changeCredentials')}</h3>
                   <form onSubmit={changePassword} className="settings-form">
                     <div className="field-group">
-                      <label>当前密码</label>
+                      <label>{t('oldPass')}</label>
                       <input type="password" className="field-input" value={pwForm.old}
                         onChange={e => setPwForm({ ...pwForm, old: e.target.value })} />
                     </div>
                     <div className="field-group">
-                      <label>新用户名（留空保持不变）</label>
-                      <input type="text" className="field-input" placeholder={adminSettings.admin_username || 'admin'}
-                        value={pwForm.newUser}
+                      <label>{t('newUsername')}</label>
+                      <input type="text" className="field-input" value={pwForm.newUser}
                         onChange={e => setPwForm({ ...pwForm, newUser: e.target.value })} />
                     </div>
                     <div className="field-group">
-                      <label>新密码（至少6位）</label>
+                      <label>{t('newPass')}</label>
                       <input type="password" className="field-input" value={pwForm.newPass}
                         onChange={e => setPwForm({ ...pwForm, newPass: e.target.value })} />
                     </div>
                     <div className="field-group">
-                      <label>确认新密码</label>
+                      <label>{t('confirmPass')}</label>
                       <input type="password" className="field-input" value={pwForm.confirm}
                         onChange={e => setPwForm({ ...pwForm, confirm: e.target.value })} />
                     </div>
-                    <button type="submit" className="btn-primary">更新凭据</button>
+                    <button type="submit" className="btn-primary">{t('update')}</button>
                   </form>
-                </div>
-
-                {/* VPS Guide */}
-                <div className="panel-card guide-card">
-                  <h3>📖 小白指引：不同配置 VPS 推荐设置</h3>
-                  <p className="guide-intro">
-                    『DHT 并发解析数』是关键性能参数。每个 DHT 解析任务会占用 ~25 个 TCP/UDP 连接和部分内存，
-                    设置过大会导致文件描述符耗尽或 OOM。
-                  </p>
-                  <table className="guide-table">
-                    <thead>
-                      <tr><th>VPS 配置</th><th>推荐并发数</th><th>Tracker 上限</th><th>备注</th></tr>
-                    </thead>
-                    <tbody>
-                      <tr className="guide-row-warn">
-                        <td>1核 512M</td><td><strong>3–5</strong></td><td>100</td><td>保守，避免 OOM</td>
-                      </tr>
-                      <tr>
-                        <td>1核 1G</td><td><strong>10</strong></td><td>200</td><td>默认推荐</td>
-                      </tr>
-                      <tr>
-                        <td>2核 2G</td><td><strong>20</strong></td><td>300</td><td>性价比高</td>
-                      </tr>
-                      <tr>
-                        <td>4核 4G</td><td><strong>40</strong></td><td>500</td><td>高性能</td>
-                      </tr>
-                      <tr>
-                        <td>8核 8G+</td><td><strong>80–100</strong></td><td>不限</td><td>需同步调大 ulimit</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                  <div className="guide-tips">
-                    <div className="guide-tip">
-                      <span className="tip-icon">&#9888;</span>
-                      <span><strong>ulimit -n</strong>：服务器默认文件描述符上限为 1024。并发数大于 10 时，建议启动脚本添加：<code>ulimit -n 65535</code></span>
-                    </div>
-                    <div className="guide-tip">
-                      <span className="tip-icon">&#128274;</span>
-                      <span><strong>缓存命中率：</strong>已解析过的 hash 直接返回数据库缓存，<em>不占用</em>并发数。高命中率时 1核也可支撑数千 QPS。</span>
-                    </div>
-                    <div className="guide-tip">
-                      <span className="tip-icon">&#128257;</span>
-                      <span><strong>Tracker 数量越多越好吗？</strong>不完全是。有效 tracker 过多反而增加启动开销，200–300 个活跃 tracker 是最优区间，配合一键清理定期淘汰死链。</span>
-                    </div>
-                  </div>
                 </div>
               </div>
             )}
@@ -539,24 +502,23 @@ export default function App() {
     );
   }
 
-  // ── Main page ─────────────────────────────────────────────────────────────
   return (
     <div className="page-wrap">
       <main className="main-center">
-        {/* Logo */}
         <motion.div className="brand"
           initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .4 }}>
           <img src="/logo.png" alt="Magnet Search" className="brand-logo" />
+          <h1 className="brand-title">{t('title')}</h1>
+          <p className="brand-subtitle">{t('subtitle')}</p>
         </motion.div>
 
-        {/* Search */}
         <form onSubmit={e => { e.preventDefault(); doSearch(magnet); }} className="search-wrap">
           <div className={`search-box${parsing ? ' searching' : ''}`}>
             <Search className="search-ico" size={18} />
             <input
               type="text"
               className="search-input"
-              placeholder="粘贴磁力链接 或 40位哈希值…"
+              placeholder={t('placeholder')}
               value={magnet}
               onChange={e => { setMagnet(e.target.value); setError(null); }}
               disabled={parsing}
@@ -570,7 +532,6 @@ export default function App() {
             )}
           </div>
 
-          {/* Progress bar (seamlessly attached below search box) */}
           <AnimatePresence>
             {parsing && (
               <motion.div className="progress-track"
@@ -582,13 +543,12 @@ export default function App() {
 
           <div className="search-actions">
             <button type="submit" className="btn-search" disabled={parsing || !magnet.trim()}>
-              {parsing ? '解析中…' : '解析磁力'}
+              {parsing ? t('btnParsing') : t('btnParse')}
             </button>
           </div>
-          <p className="privacy-hint">本站不存储任何文件 · 不收集个人信息 · 仅解析磁力元数据</p>
+          <p className="privacy-hint">{t('privacyHint')}</p>
         </form>
 
-        {/* Cycling status */}
         <AnimatePresence mode="wait">
           {parsing && (
             <motion.p key={statusIdx} className="status-msg"
@@ -600,7 +560,6 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* Error */}
         <AnimatePresence>
           {error && (
             <motion.div className="error-box"
@@ -611,38 +570,33 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* Result */}
         <AnimatePresence>
           {result && (
             <motion.div className="result-wrap"
               initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }}
               transition={{ duration: .38, ease: [.16, 1, .3, 1] }}>
 
-              {/* Header */}
               <div className="result-header">
                 <h2 className="result-name">{result.name}</h2>
                 <div className="hash-row">
                   <code className="hash-text">{result.infoHash}</code>
-                  <button className="icon-btn" onClick={copyHash} title="复制哈希">
+                  <button className="icon-btn" onClick={copyHash} title={t('copyHash')}>
                     {copied ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
                   </button>
-                  <button className="icon-btn" onClick={copyMagnet} title="复制磁力链接">
+                  <button className="icon-btn" onClick={copyMagnet} title={t('copyMagnet')}>
                     {copiedMag ? <Check size={14} color="#10b981" /> : <Link2 size={14} />}
                   </button>
                 </div>
                 <div className="result-badges">
-                  <span className="badge">{result.files?.length ?? 1} 个文件</span>
+                  <span className="badge">{(result.files || []).length} {t('fileCount')}</span>
                   <span className="badge">{formatSize(result.totalSize)}</span>
-                  {result.torrentBase64 && (
-                    <button className="btn-dl" onClick={downloadTorrent} title="下载 .torrent 种子文件">
-                      <Download size={13} />
-                      下载种子
-                    </button>
-                  )}
+                  <button className="btn-dl" onClick={downloadTorrent} title={t('downloadTorrent')}>
+                    <Download size={13} />
+                    {t('downloadTorrent')}
+                  </button>
                 </div>
               </div>
 
-              {/* File list */}
               <div className="file-list">
                 {(result.files || []).map((file, i) => {
                   const ft = getFileType(file.path);
@@ -664,7 +618,19 @@ export default function App() {
       </main>
 
       <footer className="site-footer">
-        <span>隐私保护</span>
+        <span>&copy; 10W Magnet Parser - Privacy Focused</span>
+        <button 
+          onClick={() => {
+            const languages = Object.keys(translations);
+            const nextIdx = (languages.indexOf(lang) + 1) % languages.length;
+            setLang(languages[nextIdx]);
+          }}
+          className="lang-toggle-btn"
+          title="Switch Language"
+        >
+          <Globe size={14} />
+          <span>{lang.toUpperCase()}</span>
+        </button>
       </footer>
     </div>
   );

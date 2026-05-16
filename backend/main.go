@@ -120,13 +120,19 @@ func main() {
 			log.Printf("Honeypot (Path) triggered by IP: %s", c.ClientIP())
 		}
 
-		// 3. Fallback to index.html for SPA routing
+		// 3. Fallback to index.html for SPA routing — inject admin path
 		file, err := fs.ReadFile(fe, "index.html")
 		if err != nil {
 			c.String(http.StatusNotFound, "Frontend not found")
 			return
 		}
-		c.Data(http.StatusOK, "text/html; charset=utf-8", file)
+		adminPath := db.GetSetting("admin_path")
+		if adminPath == "" {
+			adminPath = "10w_gl888"
+		}
+		inject := fmt.Sprintf(`<script>window.__ADMIN_PATH__="%s";</script></head>`, adminPath)
+		html := strings.Replace(string(file), "</head>", inject, 1)
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
 	})
 
 	// Default Port: 6467
