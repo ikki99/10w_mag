@@ -161,29 +161,20 @@ export default function App() {
 
   const downloadTorrent = () => {
     if (!result?.infoHash) return;
-    // Use backend HTTP endpoint — works in TG/WeChat in-app browsers (no blob:// restriction)
-    if (result.torrentBase64 || result.torrentFile) {
-      // If we have data locally (WebTorrent stage 1 result), fall back to blob for speed
-      let blob;
-      if (result.torrentFile) {
-        blob = new Blob([result.torrentFile], { type: 'application/x-bittorrent' });
-      } else {
-        const bin = atob(result.torrentBase64);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        blob = new Blob([bytes], { type: 'application/x-bittorrent' });
-      }
+    if (result.torrentFile) {
+      // WebTorrent direct result — blob download (fastest, no network round-trip)
+      const blob = new Blob([result.torrentFile], { type: 'application/x-bittorrent' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `${result.name || result.infoHash}.torrent`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } else {
-      // Fallback: direct HTTP download from backend (works in all in-app browsers)
-      window.location.href = `/api/torrent/${result.infoHash}`;
+      // Backend result (torrentBase64) or fallback: use HTTP endpoint.
+      // window.open + _blank works in TG/WeChat in-app browsers; they hand off
+      // to the system download manager or external browser instead of blocking blob://.
+      window.open(`/api/torrent/${result.infoHash}`, '_blank', 'noopener');
     }
   };
 
