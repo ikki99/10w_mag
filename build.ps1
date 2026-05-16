@@ -7,6 +7,10 @@ npm install
 npm run build
 cd ..
 
+# Copy dist to backend for embedding
+if (Test-Path backend/dist) { Remove-Item -Recurse -Force backend/dist }
+Copy-Item -Recurse frontend/dist backend/dist
+
 if (!(Test-Path bin)) { mkdir bin }
 
 echo "--- 2. Building Backend (Windows) ---"

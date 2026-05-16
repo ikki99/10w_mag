@@ -1,16 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Outfit:wght@400;600;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 :root {
-  --primary: #8b5cf6;
-  --primary-glow: rgba(139, 92, 246, 0.5);
-  --accent: #ec4899;
-  --bg-dark: #0f172a;
-  --bg-darker: #020617;
-  --text-main: #f8fafc;
-  --text-dim: #94a3b8;
-  --glass: rgba(255, 255, 255, 0.03);
-  --glass-border: rgba(255, 255, 255, 0.1);
-  --glass-hover: rgba(255, 255, 255, 0.08);
+  --primary: #1a73e8;
+  --text-main: #202124;
+  --text-dim: #70757a;
+  --bg-white: #ffffff;
+  --border-light: #dadce0;
+  --shadow-sm: 0 1px 6px rgba(32,33,36,.28);
 }
 
 * {
@@ -20,137 +16,128 @@
 }
 
 body {
-  font-family: 'Inter', -apple-system, sans-serif;
-  background-color: var(--bg-darker);
+  font-family: 'Inter', sans-serif;
+  background-color: var(--bg-white);
   color: var(--text-main);
-  overflow-x: hidden;
-  min-height: 100vh;
+  line-height: 1.5;
 }
 
-/* Background Animation */
-.bg-mesh {
-  position: fixed;
-  top: 0;
-  left: 0;
+.container {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+/* Base Card Style (Google Style) */
+.glass-card, .result-card {
+  background: #fff;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 24px;
+  margin-bottom: 20px;
+}
+
+/* Home Page */
+.home-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 80vh;
+}
+
+.logo-main {
+  width: 160px;
+  margin-bottom: 30px;
+}
+
+.search-box-container {
   width: 100%;
-  height: 100%;
-  z-index: -1;
-  background: radial-gradient(circle at 50% 50%, #1e1b4b 0%, #020617 100%);
-  overflow: hidden;
-}
-
-.bg-mesh::before {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: radial-gradient(circle at 70% 30%, rgba(139, 92, 246, 0.15) 0%, transparent 50%),
-              radial-gradient(circle at 20% 80%, rgba(236, 72, 153, 0.1) 0%, transparent 50%);
-  animation: rotate 30s linear infinite;
-}
-
-@keyframes rotate {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-h1, h2, h3 {
-  font-family: 'Outfit', sans-serif;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-}
-
-.glass-card {
-  background: var(--glass);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--glass-border);
-  border-radius: 24px;
-  padding: 2rem;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.glass-card:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: var(--glass-hover);
-}
-
-.input-container {
+  max-width: 584px;
   position: relative;
-  width: 100%;
 }
 
-input[type="text"] {
+.search-box {
   width: 100%;
-  background: rgba(0, 0, 0, 0.3);
-  border: 2px solid var(--glass-border);
-  border-radius: 16px;
-  padding: 1.25rem 1.5rem;
-  color: white;
-  font-size: 1.1rem;
-  transition: all 0.2s;
+  height: 46px;
+  border: 1px solid var(--border-light);
+  border-radius: 24px;
+  padding: 0 50px;
+  font-size: 16px;
   outline: none;
 }
 
-input[type="text"]:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 20px var(--primary-glow);
+.search-box:focus {
+  box-shadow: var(--shadow-sm);
 }
 
-.btn-primary {
-  background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
-  color: white;
-  border: none;
-  padding: 1rem 2rem;
-  border-radius: 16px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s;
+.search-icon {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #9aa0a6;
+}
+
+/* Admin Specific */
+.table-clean {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
+}
+
+.table-clean th {
+  text-align: left;
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 2px solid #f1f3f4;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 0.9rem;
-  box-shadow: 0 10px 15px -3px rgba(139, 92, 246, 0.3);
 }
 
-.btn-primary:hover {
-  transform: translateY(-2px) scale(1.02);
-  box-shadow: 0 20px 25px -5px rgba(139, 92, 246, 0.4);
+.table-clean td {
+  padding: 12px;
+  border-bottom: 1px solid #f1f3f4;
+  font-size: 14px;
 }
 
-.btn-primary:active {
-  transform: translateY(0);
+/* Buttons */
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  padding: 10px 24px;
+  border-radius: 4px;
+  font-weight: 500;
+  cursor: pointer;
+  font-size: 14px;
 }
 
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.5rem 1rem;
-  border-radius: 9999px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  gap: 0.5rem;
+.btn-primary:hover { background: #1765cc; }
+
+.btn-google {
+  background: #f8f9fa;
+  border: 1px solid #f8f9fa;
+  padding: 8px 16px;
+  border-radius: 4px;
+  color: #3c4043;
+  margin: 10px 4px;
+  cursor: pointer;
 }
 
-.status-parsing { background: rgba(59, 130, 246, 0.1); color: #60a5fa; }
-.status-success { background: rgba(34, 197, 94, 0.1); color: #4ade80; }
-.status-error { background: rgba(239, 68, 68, 0.1); color: #f87171; }
+.btn-google:hover { border-color: #dadce0; }
 
-.file-item {
-  display: flex;
-  justify-content: space-between;
-  padding: 1rem;
-  border-bottom: 1px solid var(--glass-border);
-  transition: background 0.2s;
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.file-item:last-child { border-bottom: none; }
-.file-item:hover { background: rgba(255, 255, 255, 0.02); }
-
-.gradient-text {
-  background: linear-gradient(to right, #fff, #94a3b8);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
+.flex { display: flex; }
+.gap-4 { gap: 1rem; }
+.justify-between { justify-content: space-between; }
+.items-center { align-items: center; }
+.mb-8 { margin-bottom: 2rem; }
+.mb-4 { margin-bottom: 1rem; }
+.text-3xl { font-size: 1.875rem; line-height: 2.25rem; }
+.font-bold { font-weight: 700; }

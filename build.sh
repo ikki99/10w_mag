@@ -10,6 +10,10 @@ npm install
 npm run build
 cd ..
 
+# Copy dist to backend for embedding
+rm -rf backend/dist
+cp -r frontend/dist backend/dist
+
 echo "--- 2. Building Backend (Linux) ---"
 cd backend
 GOOS=linux GOARCH=amd64 go build -o "../bin/$PROJECT_NAME-linux64" main.go
