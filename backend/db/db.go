@@ -20,10 +20,14 @@ func Init() error {
 	}
 
 	var err error
-	database, err = sql.Open("sqlite", dbPath)
+	// WAL mode allows concurrent reads while a write transaction is active.
+	// _busy_timeout prevents "database is locked" errors under concurrent load.
+	database, err = sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return err
 	}
+	// SQLite performs best with a single writer connection; allow multiple readers.
+	database.SetMaxOpenConns(1)
 
 	// Create tables
 	queries := []string{
@@ -169,7 +173,7 @@ func GetTrackers() ([]string, error) {
 }
 
 func GetTrackersAdmin() ([]map[string]interface{}, error) {
-	rows, err := database.Query("SELECT id, url, enabled FROM trackers")
+	rows, err := database.Query("SELECT id, url, enabled FROM trackers ORDER BY id DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +184,9 @@ func GetTrackersAdmin() ([]map[string]interface{}, error) {
 		var id int
 		var url string
 		var enabled int
-		rows.Scan(&id, &url, &enabled)
+		if err := rows.Scan(&id, &url, &enabled); err != nil {
+			continue
+		}
 		trackers = append(trackers, map[string]interface{}{
 			"id":      id,
 			"url":     url,
@@ -191,7 +197,7 @@ func GetTrackersAdmin() ([]map[string]interface{}, error) {
 }
 
 func GetAllStats() ([]map[string]interface{}, error) {
-	rows, err := database.Query("SELECT info_hash, query_count, last_query_time FROM hash_stats ORDER BY query_count DESC")
+	rows, err := database.Query("SELECT info_hash, query_count, last_query_time FROM hash_stats ORDER BY query_count DESC LIMIT 100")
 	if err != nil {
 		return nil, err
 	}
@@ -199,13 +205,15 @@ func GetAllStats() ([]map[string]interface{}, error) {
 
 	var stats []map[string]interface{}
 	for rows.Next() {
-		var hash, lastTime string
+		var hash, lastTime sql.NullString
 		var count int
-		rows.Scan(&hash, &count, &lastTime)
+		if err := rows.Scan(&hash, &count, &lastTime); err != nil {
+			continue
+		}
 		stats = append(stats, map[string]interface{}{
-			"info_hash":       hash,
+			"info_hash":       hash.String,
 			"query_count":     count,
-			"last_query_time": lastTime,
+			"last_query_time": lastTime.String,
 		})
 	}
 	return stats, nil
@@ -291,7 +299,7 @@ func SaveTrackers(urls []string) error {
 	}
 
 	var currentCount int
-	database.QueryRow("SELECT COUNT(*) FROM trackers").Scan(&currentCount)
+	tx.QueryRow("SELECT COUNT(*) FROM trackers").Scan(&currentCount)
 
 	stmt, _ := tx.Prepare("INSERT OR IGNORE INTO trackers (url) VALUES (?)")
 	for _, url := range urls {
