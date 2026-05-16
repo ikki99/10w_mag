@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Search, Film, Music, Image as ImgIcon, Archive,
-  FileText, Code2, File, Copy, Check, Link2, Download,
+  FileText, Code2, File, Check, Link2, Download,
   ShieldCheck, Activity, AlertCircle, X, RefreshCw, Globe, Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -33,7 +33,6 @@ export default function App() {
   const [statusIdx, setStatus]  = useState(0);
   const [stats, setStats]       = useState(null);
   const [copied, setCopied]     = useState(false);
-  const [copiedMag, setCopiedMag] = useState(false);
 
   // Admin
   const [isAdmin, setIsAdmin]         = useState(false);
@@ -112,7 +111,6 @@ export default function App() {
     setError(null);
     setStats(null);
     setCopied(false);
-    setCopiedMag(false);
 
     if (hash) {
       try {
@@ -154,37 +152,27 @@ export default function App() {
     if (token) { setIsAdmin(true); fetchAdminData(); }
   }, []);
 
-  const copyHash = async () => {
+  const copyMagnet = async () => {
     if (!result?.infoHash) return;
-    await navigator.clipboard.writeText(result.infoHash).catch(() => {});
+    await navigator.clipboard.writeText(`magnet:?xt=urn:btih:${result.infoHash}`).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const copyMagnet = async () => {
-    if (!result?.infoHash) return;
-    await navigator.clipboard.writeText(`magnet:?xt=urn:btih:${result.infoHash}`).catch(() => {});
-    setCopiedMag(true);
-    setTimeout(() => setCopiedMag(false), 2000);
-  };
-
   const downloadTorrent = () => {
-    if (!result) return;
-    
-    let blob;
-    // 1. If we have the raw Buffer/Uint8Array from WebTorrent (Stage 1 Success)
-    if (result.torrentFile) {
-      blob = new Blob([result.torrentFile], { type: 'application/x-bittorrent' });
-    } 
-    // 2. If we have base64 from backend (Stage 2 Success)
-    else if (result.torrentBase64) {
-      const binaryString = atob(result.torrentBase64);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-      blob = new Blob([bytes], { type: 'application/x-bittorrent' });
-    }
-
-    if (blob) {
+    if (!result?.infoHash) return;
+    // Use backend HTTP endpoint — works in TG/WeChat in-app browsers (no blob:// restriction)
+    if (result.torrentBase64 || result.torrentFile) {
+      // If we have data locally (WebTorrent stage 1 result), fall back to blob for speed
+      let blob;
+      if (result.torrentFile) {
+        blob = new Blob([result.torrentFile], { type: 'application/x-bittorrent' });
+      } else {
+        const bin = atob(result.torrentBase64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        blob = new Blob([bytes], { type: 'application/x-bittorrent' });
+      }
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -194,7 +182,8 @@ export default function App() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } else {
-      alert('Metadata not sufficient to generate .torrent file.');
+      // Fallback: direct HTTP download from backend (works in all in-app browsers)
+      window.location.href = `/api/torrent/${result.infoHash}`;
     }
   };
 
@@ -580,11 +569,8 @@ export default function App() {
                 <h2 className="result-name">{result.name}</h2>
                 <div className="hash-row">
                   <code className="hash-text">{result.infoHash}</code>
-                  <button className="icon-btn" onClick={copyHash} title={t('copyHash')}>
-                    {copied ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
-                  </button>
                   <button className="icon-btn" onClick={copyMagnet} title={t('copyMagnet')}>
-                    {copiedMag ? <Check size={14} color="#10b981" /> : <Link2 size={14} />}
+                    {copied ? <Check size={14} color="#10b981" /> : <Link2 size={14} />}
                   </button>
                 </div>
                 <div className="result-badges">

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -78,6 +79,7 @@ func main() {
 		api.GET("/parse/cache", handleCacheCheck)
 		api.GET("/stats/:hash", handleStats)
 		api.GET("/trackers", handleTrackers)
+		api.GET("/torrent/:hash", handleDownloadTorrent)
 
 		// Admin Login
 		api.POST("/admin/login", handleAdminLogin)
@@ -224,6 +226,39 @@ func handleParse(c *gin.Context) {
 	db.IncrementStats(result.InfoHash, string(resultJSON))
 
 	c.JSON(http.StatusOK, result)
+}
+
+// handleDownloadTorrent serves the .torrent file for a given info hash directly.
+// Using a real HTTP download works in all in-app browsers (TG, WeChat, etc.)
+// that block blob:// URL downloads.
+func handleDownloadTorrent(c *gin.Context) {
+	hash := strings.ToLower(c.Param("hash"))
+	if hash == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "hash is required"})
+		return
+	}
+	cached, err := db.GetMetadata(hash)
+	if err != nil || cached == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not cached"})
+		return
+	}
+	var result parser.ParseResult
+	if json.Unmarshal([]byte(cached), &result) != nil || result.TorrentBase64 == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "torrent data unavailable"})
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(result.TorrentBase64)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decode torrent"})
+		return
+	}
+	name := result.Name
+	if name == "" {
+		name = hash
+	}
+	safe := strings.NewReplacer("/","_","\\","_",":","_","*","_","?","_",`"`,"_","<","_",">","_","|","_").Replace(name)
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.torrent"`, safe))
+	c.Data(http.StatusOK, "application/x-bittorrent", data)
 }
 
 func handleStats(c *gin.Context) {
