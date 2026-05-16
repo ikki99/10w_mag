@@ -22,7 +22,7 @@ import (
 )
 
 const ADMIN_PASS = "10w_gl888" // fallback if DB not initialized
-const VERSION = "1.5.1"
+const VERSION = "1.5.2"
 
 //go:embed all:dist
 var frontendFS embed.FS
